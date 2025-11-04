@@ -113,8 +113,20 @@ Return the result as a JSON object with this structure:
         Placeholder method to extract topics from text.
         This will be replaced by actual Gemini processing.
         """
+        # Check if input looks like JSON and reject it
+        if syllabus_text.strip().startswith('{') or syllabus_text.strip().startswith('['):
+            raise ValueError(
+                "Input appears to be JSON. Please provide plain text syllabus, "
+                "not JSON format. Use --syllabus-file with a .txt file."
+            )
+        
         # Simple text parsing - split by lines and create topics
         lines = [line.strip() for line in syllabus_text.split('\n') if line.strip()]
+        
+        # Filter out lines that look like JSON syntax
+        lines = [line for line in lines if not any(
+            line.startswith(c) for c in ['{', '}', '[', ']', '"']
+        ) and ':' not in line[:5]]
         
         topics = []
         current_topic = None
@@ -132,7 +144,8 @@ Return the result as a JSON object with this structure:
             elif current_topic and (line.startswith('-') or line.startswith('•')):
                 # This is a key point
                 key_point = line.lstrip('-•').strip()
-                current_topic.key_points.append(key_point)
+                if key_point:  # Only add non-empty key points
+                    current_topic.key_points.append(key_point)
         
         if current_topic:
             topics.append(current_topic)

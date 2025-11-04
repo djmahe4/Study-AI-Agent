@@ -120,15 +120,23 @@ def show_mindmap_page():
     col1, col2 = st.columns(2)
     with col1:
         if st.button("Export as JSON"):
-            generator.export_to_json("data/mindmap.json")
-            st.success("Mind map exported to data/mindmap.json")
-            with open("data/mindmap.json", "r") as f:
-                st.download_button(
-                    label="Download JSON",
-                    data=f.read(),
-                    file_name="mindmap.json",
-                    mime="application/json"
-                )
+            try:
+                generator.export_to_json("data/mindmap.json")
+                st.success("Mind map exported to data/mindmap.json")
+                
+                # Check if file exists before reading
+                if Path("data/mindmap.json").exists():
+                    with open("data/mindmap.json", "r") as f:
+                        st.download_button(
+                            label="Download JSON",
+                            data=f.read(),
+                            file_name="mindmap.json",
+                            mime="application/json"
+                        )
+                else:
+                    st.error("Export file not found")
+            except Exception as e:
+                st.error(f"Error exporting mind map: {e}")
 
 
 def show_quiz_page():

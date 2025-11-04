@@ -68,10 +68,11 @@ class Animator:
         fourcc = cv2.VideoWriter_fourcc(*codec)
         out = cv2.VideoWriter(output_path, fourcc, self.fps, (self.width, self.height))
         
-        for frame in self.frames:
-            out.write(frame)
-        
-        out.release()
+        try:
+            for frame in self.frames:
+                out.write(frame)
+        finally:
+            out.release()
     
     def clear_frames(self) -> None:
         """Clear all frames."""
