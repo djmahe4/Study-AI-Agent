@@ -54,7 +54,7 @@ class KnowledgeBase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        topic_id = topic.id or topic.name.lower().replace(" ", "_")
+        topic_id = topic.id or str(uuid.uuid4())
         topic.id = topic_id
         
         cursor.execute("""
