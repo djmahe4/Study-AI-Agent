@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import List, Optional
 from .models import Topic, Syllabus, Question
+import uuid
 
 
 class KnowledgeBase:
