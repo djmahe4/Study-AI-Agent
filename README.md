@@ -2,6 +2,8 @@
 
 An AI-augmented intelligent learning system that teaches with mind maps, animations, structured knowledge, and interactive learning tools.
 
+**Subject-Based Learning System** - Create subjects, process syllabi with Gemini AI, and integrate question banks with RAG.
+
 ## ✨ Features
 
 - **📚 Structured Knowledge**: Pydantic-based data models for organizing learning content
@@ -66,6 +68,35 @@ learning-ai/
    ```
 
 ### Usage
+
+#### Creating a Subject
+
+**Create a subject from a syllabus file:**
+```bash
+python cli.py create-subject "Machine Learning" --syllabus-file syllabus.txt
+```
+
+**With question bank (uses RAG):**
+```bash
+python cli.py create-subject "Machine Learning" \
+  --syllabus-file syllabus.txt \
+  --question-bank @questions.pdf
+```
+
+**Interactive mode:**
+```bash
+python cli.py create-subject "Machine Learning"
+# Then paste syllabus text and press Ctrl+D
+```
+
+**Managing subjects:**
+```bash
+# List all subjects
+python cli.py list-subjects
+
+# Select a subject to work with
+python cli.py select-subject "Machine Learning"
+```
 
 #### Python CLI
 

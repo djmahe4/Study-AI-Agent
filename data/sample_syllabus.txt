@@ -1,0 +1,25 @@
+Machine Learning Fundamentals
+
+Supervised Learning
+- Classification algorithms
+- Regression techniques
+- Training and validation
+- Model evaluation metrics
+
+Neural Networks
+- Perceptrons and activation functions
+- Backpropagation algorithm
+- Deep learning architectures
+- Convolutional neural networks
+
+Unsupervised Learning
+- Clustering algorithms
+- Dimensionality reduction
+- K-means and hierarchical clustering
+- Principal Component Analysis
+
+Model Optimization
+- Gradient descent
+- Learning rate scheduling
+- Regularization techniques
+- Hyperparameter tuning

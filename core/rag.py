@@ -9,9 +9,19 @@ from .models import Topic, Question
 class RAGEngine:
     """
     Placeholder for RAG engine to answer questions based on knowledge base.
+    
+    TODO: Integrate with LangChain for RAG functionality
+    TODO: Add vector database support (FAISS, Chroma, or Pinecone)
+    TODO: Implement document loading from PDFs
+    TODO: Add chunking strategies for large documents
+    TODO: Support multiple embedding models (OpenAI, Sentence Transformers)
+    TODO: Add conversation memory for follow-up questions
     """
     def __init__(self, knowledge_base=None):
         self.knowledge_base = knowledge_base
+        # TODO: Initialize vector store
+        # TODO: Initialize embeddings model
+        # TODO: Initialize LLM for generation
     
     def query(self, question: str, context: Optional[List[Topic]] = None) -> str:
         """

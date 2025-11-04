@@ -61,8 +61,20 @@ class Syllabus(BaseModel):
     title: str
     description: Optional[str] = None
     topics: List[Topic] = Field(default_factory=list)
+    question_bank_path: Optional[str] = None
     created_at: datetime = Field(default_factory=datetime.now)
     updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class Subject(BaseModel):
+    """
+    Represents a subject with its syllabus and resources.
+    """
+    name: str
+    syllabus: Syllabus
+    folder_path: str
+    question_bank_path: Optional[str] = None
+    created_at: datetime = Field(default_factory=datetime.now)
 
 
 class AnimationScript(BaseModel):

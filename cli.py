@@ -11,21 +11,200 @@ from rich.table import Table
 from rich import print as rprint
 
 from core import (
-    Topic, Syllabus, Question, KnowledgeBase,
+    Topic, Syllabus, Question, Subject, KnowledgeBase,
     save_syllabus_to_json, load_syllabus_from_json,
     create_acronym_mnemonic, get_example_difference
 )
+from core.gemini_processor import GeminiProcessor, create_subject_folder
+from core.rag import RAGEngine
 from visual import create_simple_mindmap, create_tcp_handshake_animation, create_stack_animation
 
 app = typer.Typer(help="AI Learning Engine CLI")
 console = Console()
+
+# Global state for current subject
+CURRENT_SUBJECT_FILE = "data/.current_subject"
 
 
 @app.command()
 def init(db_path: str = "data/memory.db"):
     """Initialize the knowledge base."""
     kb = KnowledgeBase(db_path)
+    Path("data/subjects").mkdir(parents=True, exist_ok=True)
     console.print(f"[green]Knowledge base initialized at {db_path}[/green]")
+    console.print(f"[green]Subjects folder created at data/subjects[/green]")
+
+
+@app.command()
+def create_subject(
+    subject_name: str = typer.Argument(..., help="Name of the subject"),
+    syllabus_file: Optional[str] = typer.Option(None, help="Path to syllabus text file"),
+    question_bank: Optional[str] = typer.Option(None, help="Path to question bank PDF (use @ prefix)"),
+):
+    """
+    Create a new subject with syllabus processing via Gemini.
+    
+    Example:
+        python cli.py create-subject "Machine Learning" --syllabus-file syllabus.txt --question-bank @questions.pdf
+    """
+    console.print(f"[cyan]Creating subject: {subject_name}[/cyan]")
+    
+    # Read syllabus text
+    if syllabus_file and Path(syllabus_file).exists():
+        with open(syllabus_file, 'r') as f:
+            syllabus_text = f.read()
+    else:
+        console.print("[yellow]No syllabus file provided. Enter syllabus text (Ctrl+D to finish):[/yellow]")
+        lines = []
+        try:
+            while True:
+                line = input()
+                lines.append(line)
+        except EOFError:
+            pass
+        syllabus_text = '\n'.join(lines)
+    
+    if not syllabus_text.strip():
+        console.print("[red]Error: No syllabus text provided[/red]")
+        raise typer.Exit(1)
+    
+    # Process question bank path
+    qbank_path = None
+    if question_bank:
+        if question_bank.startswith('@'):
+            qbank_path = question_bank[1:]  # Remove @ prefix
+            if not Path(qbank_path).exists():
+                console.print(f"[yellow]Warning: Question bank file not found: {qbank_path}[/yellow]")
+                qbank_path = None
+            else:
+                console.print(f"[green]Question bank found: {qbank_path}[/green]")
+                # TODO: Initialize RAG tool for question bank
+                console.print("[yellow]RAG tool will process this question bank (TODO: implement)[/yellow]")
+    
+    # Create subject folder
+    subject_folder = create_subject_folder(subject_name)
+    console.print(f"[green]Subject folder created: {subject_folder}[/green]")
+    
+    # Process syllabus with Gemini
+    console.print("[cyan]Processing syllabus with Gemini (placeholder)...[/cyan]")
+    processor = GeminiProcessor()
+    syllabus = processor.process_syllabus_text(syllabus_text, subject_name)
+    
+    if qbank_path:
+        syllabus.question_bank_path = qbank_path
+    
+    # Save syllabus
+    syllabus_path = f"{subject_folder}/syllabus/{subject_name.lower().replace(' ', '_')}.json"
+    save_syllabus_to_json(syllabus, syllabus_path)
+    console.print(f"[green]Syllabus saved: {syllabus_path}[/green]")
+    
+    # Create subject metadata
+    subject = Subject(
+        name=subject_name,
+        syllabus=syllabus,
+        folder_path=subject_folder,
+        question_bank_path=qbank_path
+    )
+    
+    # Save subject list
+    subjects_file = "data/subjects/subjects.json"
+    subjects = []
+    if Path(subjects_file).exists():
+        with open(subjects_file, 'r') as f:
+            subjects = json.load(f)
+    
+    subjects.append({
+        "name": subject_name,
+        "folder_path": subject_folder,
+        "syllabus_path": syllabus_path,
+        "question_bank_path": qbank_path,
+        "created_at": str(subject.created_at)
+    })
+    
+    with open(subjects_file, 'w') as f:
+        json.dump(subjects, f, indent=2)
+    
+    console.print(f"\n[green]✅ Subject '{subject_name}' created successfully![/green]")
+    console.print(f"[cyan]Extracted {len(syllabus.topics)} topics from syllabus[/cyan]")
+    
+    # Set as current subject
+    _set_current_subject(subject_name)
+    console.print(f"[yellow]Set '{subject_name}' as current subject[/yellow]")
+
+
+@app.command()
+def list_subjects():
+    """List all created subjects."""
+    subjects_file = "data/subjects/subjects.json"
+    
+    if not Path(subjects_file).exists():
+        console.print("[yellow]No subjects found. Create one with 'create-subject'[/yellow]")
+        return
+    
+    with open(subjects_file, 'r') as f:
+        subjects = json.load(f)
+    
+    if not subjects:
+        console.print("[yellow]No subjects found.[/yellow]")
+        return
+    
+    current_subject = _get_current_subject()
+    
+    table = Table(title="Available Subjects")
+    table.add_column("Subject", style="cyan")
+    table.add_column("Folder", style="green")
+    table.add_column("Question Bank", style="yellow")
+    table.add_column("Current", style="magenta")
+    
+    for subj in subjects:
+        is_current = "✓" if subj["name"] == current_subject else ""
+        qbank = "Yes" if subj.get("question_bank_path") else "No"
+        table.add_row(
+            subj["name"],
+            subj["folder_path"],
+            qbank,
+            is_current
+        )
+    
+    console.print(table)
+
+
+@app.command()
+def select_subject(subject_name: str = typer.Argument(..., help="Name of the subject to select")):
+    """Select a subject to work with."""
+    subjects_file = "data/subjects/subjects.json"
+    
+    if not Path(subjects_file).exists():
+        console.print("[red]No subjects found. Create one first.[/red]")
+        raise typer.Exit(1)
+    
+    with open(subjects_file, 'r') as f:
+        subjects = json.load(f)
+    
+    subject_names = [s["name"] for s in subjects]
+    
+    if subject_name not in subject_names:
+        console.print(f"[red]Subject '{subject_name}' not found.[/red]")
+        console.print(f"[yellow]Available subjects: {', '.join(subject_names)}[/yellow]")
+        raise typer.Exit(1)
+    
+    _set_current_subject(subject_name)
+    console.print(f"[green]Selected subject: {subject_name}[/green]")
+
+
+def _set_current_subject(subject_name: str):
+    """Save current subject to file."""
+    Path(CURRENT_SUBJECT_FILE).parent.mkdir(parents=True, exist_ok=True)
+    with open(CURRENT_SUBJECT_FILE, 'w') as f:
+        f.write(subject_name)
+
+
+def _get_current_subject() -> Optional[str]:
+    """Get current subject from file."""
+    if Path(CURRENT_SUBJECT_FILE).exists():
+        with open(CURRENT_SUBJECT_FILE, 'r') as f:
+            return f.read().strip()
+    return None
 
 
 @app.command()

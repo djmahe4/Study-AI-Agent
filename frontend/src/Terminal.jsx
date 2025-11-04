@@ -52,6 +52,15 @@ const Terminal = () => {
       case 'help':
         handleHelp()
         break
+      case 'subjects':
+        handleSubjects()
+        break
+      case 'select':
+        handleSelectSubject(args)
+        break
+      case 'create-subject':
+        handleCreateSubject(args)
+        break
       case 'topics':
         handleTopics(args)
         break
@@ -94,6 +103,9 @@ const Terminal = () => {
       '═══════════════════════════════════════════════════════',
       '',
       '  help                     - Show this help message',
+      '  subjects                 - List all subjects',
+      '  select <subject>         - Select a subject to work with',
+      '  create-subject <name>    - Create new subject (use Python CLI)',
       '  topics [list]            - List all topics',
       '  add-topic <name>         - Add a new topic (interactive)',
       '  questions [topic]        - List questions for a topic',
@@ -108,6 +120,75 @@ const Terminal = () => {
       '  exit                     - Exit the application',
       '',
       '═══════════════════════════════════════════════════════',
+      ''
+    ])
+  }
+
+  const handleSubjects = () => {
+    // Simulated subjects
+    const subjects = [
+      { name: 'Machine Learning', folder: 'data/subjects/machine_learning', hasQBank: true },
+      { name: 'Data Structures', folder: 'data/subjects/data_structures', hasQBank: false },
+      { name: 'Computer Networks', folder: 'data/subjects/computer_networks', hasQBank: true }
+    ]
+
+    if (subjects.length === 0) {
+      addOutput(['', 'No subjects found. Create one with Python CLI:', '  python cli.py create-subject "Subject Name"', ''])
+      return
+    }
+
+    const output = [
+      '',
+      '📚 Available Subjects:',
+      '─────────────────────────────────────────────────────',
+      ''
+    ]
+
+    subjects.forEach((subj, index) => {
+      output.push(`${index + 1}. ${subj.name}`)
+      output.push(`   📁 ${subj.folder}`)
+      output.push(`   ${subj.hasQBank ? '✓' : '✗'} Question Bank`)
+      output.push('')
+    })
+
+    output.push('─────────────────────────────────────────────────────')
+    output.push('Use "select <subject-name>" to choose a subject')
+    output.push('')
+
+    addOutput(output)
+  }
+
+  const handleSelectSubject = (args) => {
+    if (args.length === 0) {
+      addOutput([
+        '',
+        '⚠️  Usage: select <subject-name>',
+        'Example: select "Machine Learning"',
+        ''
+      ])
+      return
+    }
+
+    const subjectName = args.join(' ')
+    addOutput([
+      '',
+      `✅ Selected subject: ${subjectName}`,
+      'All commands will now operate in context of this subject.',
+      ''
+    ])
+  }
+
+  const handleCreateSubject = (args) => {
+    addOutput([
+      '',
+      '⚠️  To create a subject, use the Python CLI:',
+      '',
+      'python cli.py create-subject "Subject Name" \\',
+      '  --syllabus-file syllabus.txt \\',
+      '  --question-bank @questions.pdf',
+      '',
+      'Or interactively:',
+      'python cli.py create-subject "Subject Name"',
       ''
     ])
   }
