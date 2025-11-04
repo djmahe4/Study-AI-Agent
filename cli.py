@@ -374,8 +374,12 @@ def load_syllabus(file_path: str):
             kb.save_topic(topic)
         
         console.print(f"[green]Loaded {len(syllabus.topics)} topics from {file_path}[/green]")
+    except FileNotFoundError:
+        console.print(f"[red]Error: File not found at {file_path}[/red]")
+    except json.JSONDecodeError:
+        console.print(f"[red]Error: Could not decode JSON from {file_path}[/red]")
     except Exception as e:
-        console.print(f"[red]Error loading syllabus: {e}[/red]")
+        console.print(f"[red]An unexpected error occurred: {e}[/red]")
 
 
 @app.command()
