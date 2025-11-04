@@ -70,7 +70,7 @@ class KnowledgeBase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        question_id = question.id or f"{question.topic}_{len(self.get_questions(question.topic))}"
+        question_id = question.id or str(uuid.uuid4())
         question.id = question_id
         
         cursor.execute("""
