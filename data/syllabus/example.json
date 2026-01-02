@@ -1,0 +1,96 @@
+{
+  "title": "Computer Science Fundamentals",
+  "description": "Essential computer science topics for learning",
+  "topics": [
+    {
+      "name": "TCP/IP Protocol",
+      "summary": "Transmission Control Protocol for reliable network communication",
+      "key_points": [
+        "Connection-oriented protocol",
+        "Ensures reliable data delivery",
+        "Uses three-way handshake",
+        "Includes error checking and flow control"
+      ],
+      "differences": [
+        "TCP is connection-based while UDP is connectionless",
+        "TCP guarantees delivery, UDP does not"
+      ],
+      "mnemonics": [
+        "SYN-ACK-ACK: Synchronize, Acknowledge, Acknowledge"
+      ],
+      "questions": [
+        "What are the three steps in TCP handshake?",
+        "How does TCP ensure reliability?"
+      ],
+      "subtopics": [
+        "Three-way handshake",
+        "Port numbers",
+        "Sequence numbers"
+      ],
+      "prerequisites": [
+        "Basic networking concepts"
+      ]
+    },
+    {
+      "name": "Data Structures",
+      "summary": "Fundamental ways to organize and store data",
+      "key_points": [
+        "Arrays store sequential data",
+        "Linked lists allow dynamic sizing",
+        "Stacks use LIFO principle",
+        "Queues use FIFO principle",
+        "Trees enable hierarchical storage"
+      ],
+      "differences": [
+        "Stack is LIFO, Queue is FIFO",
+        "Array has fixed size, Linked List is dynamic"
+      ],
+      "mnemonics": [
+        "LIFO: Last In First Out (Stack)",
+        "FIFO: First In First Out (Queue)"
+      ],
+      "questions": [
+        "What is the difference between Stack and Queue?",
+        "When would you use a linked list over an array?"
+      ],
+      "subtopics": [
+        "Arrays",
+        "Linked Lists",
+        "Stacks",
+        "Queues",
+        "Trees",
+        "Graphs"
+      ],
+      "prerequisites": []
+    },
+    {
+      "name": "Machine Learning Basics",
+      "summary": "Introduction to machine learning concepts and algorithms",
+      "key_points": [
+        "Supervised learning uses labeled data",
+        "Unsupervised learning finds patterns",
+        "Neural networks mimic brain structure",
+        "Training requires optimization"
+      ],
+      "differences": [
+        "Supervised vs Unsupervised learning",
+        "Classification vs Regression"
+      ],
+      "mnemonics": [],
+      "questions": [
+        "What is the difference between supervised and unsupervised learning?",
+        "How does a neural network learn?"
+      ],
+      "subtopics": [
+        "Supervised Learning",
+        "Unsupervised Learning",
+        "Neural Networks",
+        "Deep Learning"
+      ],
+      "prerequisites": [
+        "Linear Algebra",
+        "Statistics"
+      ]
+    }
+  ]
+}

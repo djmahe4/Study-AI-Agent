@@ -1,0 +1,10 @@
+# Sample Question Bank for Machine Learning
+
+Q1: What is supervised learning?
+A1: Supervised learning is a type of machine learning where the algorithm learns from labeled training data.
+
+Q2: What is the difference between classification and regression?
+A2: Classification predicts discrete categories while regression predicts continuous values.
+
+Q3: What is backpropagation?
+A3: Backpropagation is an algorithm used to train neural networks by computing gradients.

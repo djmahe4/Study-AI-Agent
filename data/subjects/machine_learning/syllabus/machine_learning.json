@@ -1,0 +1,89 @@
+{
+  "title": "Machine Learning",
+  "description": "Syllabus for Machine Learning",
+  "topics": [
+    {
+      "id": null,
+      "name": "Machine Learning Fundamentals",
+      "summary": "Content about Machine Learning Fundamentals",
+      "key_points": [],
+      "differences": [],
+      "mnemonics": [],
+      "questions": [],
+      "subtopics": [],
+      "prerequisites": [],
+      "created_at": "2025-11-04 04:06:37.864171"
+    },
+    {
+      "id": null,
+      "name": "Supervised Learning",
+      "summary": "Content about Supervised Learning",
+      "key_points": [
+        "Classification algorithms",
+        "Regression techniques",
+        "Training and validation",
+        "Model evaluation metrics"
+      ],
+      "differences": [],
+      "mnemonics": [],
+      "questions": [],
+      "subtopics": [],
+      "prerequisites": [],
+      "created_at": "2025-11-04 04:06:37.864192"
+    },
+    {
+      "id": null,
+      "name": "Neural Networks",
+      "summary": "Content about Neural Networks",
+      "key_points": [
+        "Perceptrons and activation functions",
+        "Backpropagation algorithm",
+        "Deep learning architectures",
+        "Convolutional neural networks"
+      ],
+      "differences": [],
+      "mnemonics": [],
+      "questions": [],
+      "subtopics": [],
+      "prerequisites": [],
+      "created_at": "2025-11-04 04:06:37.864201"
+    },
+    {
+      "id": null,
+      "name": "Unsupervised Learning",
+      "summary": "Content about Unsupervised Learning",
+      "key_points": [
+        "Clustering algorithms",
+        "Dimensionality reduction",
+        "K-means and hierarchical clustering",
+        "Principal Component Analysis"
+      ],
+      "differences": [],
+      "mnemonics": [],
+      "questions": [],
+      "subtopics": [],
+      "prerequisites": [],
+      "created_at": "2025-11-04 04:06:37.864207"
+    },
+    {
+      "id": null,
+      "name": "Model Optimization",
+      "summary": "Content about Model Optimization",
+      "key_points": [
+        "Gradient descent",
+        "Learning rate scheduling",
+        "Regularization techniques",
+        "Hyperparameter tuning"
+      ],
+      "differences": [],
+      "mnemonics": [],
+      "questions": [],
+      "subtopics": [],
+      "prerequisites": [],
+      "created_at": "2025-11-04 04:06:37.864219"
+    }
+  ],
+  "question_bank_path": null,
+  "created_at": "2025-11-04 04:06:37.864230",
+  "updated_at": "2025-11-04 04:06:37.864231"
+}
