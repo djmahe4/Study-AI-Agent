@@ -4,7 +4,11 @@ Module for processing syllabus text using Gemini AI.
 import json
 from typing import Optional
 from pathlib import Path
-from .models import Syllabus, Topic
+import logging
+from .models import Syllabus, Topic#,InitialSyllabus
+import google.generativeai as genai
+from pydantic import BaseModel as PydanticModel
+import json
 
 
 class GeminiProcessor:
@@ -17,12 +21,15 @@ class GeminiProcessor:
     TODO: Support different prompts for various educational domains
     """
     
-    def __init__(self, api_key: Optional[str] = None):
-        self.api_key = api_key
-        # TODO: Initialize Gemini client here
+    #def __init__(self, api_key: Optional[str] = None):
+        #self.api_key = api_key
+    def __init__(self, model: genai.GenerativeModel):
+        """
+        Initialize GeminiProcessor with a Gemini model.
+        """
         # import google.generativeai as genai
         # genai.configure(api_key=api_key)
-        # self.model = genai.GenerativeModel('gemini-pro')
+        self.model = model#genai.GenerativeModel('gemini-pro')
     
     def process_syllabus_text(self, syllabus_text: str, subject_name: str) -> Syllabus:
         """
@@ -36,58 +43,38 @@ class GeminiProcessor:
             Structured Syllabus object
         """
         # TODO: Replace with actual Gemini API call
-        # prompt = self._create_extraction_prompt(syllabus_text, subject_name)
+        prompt_res = self._create_extraction_prompt(syllabus_text, subject_name)
         # response = self.model.generate_content(prompt)
-        # syllabus_data = self._parse_gemini_response(response.text)
-        
+        # syllabus_data = self._parse_gemini_response(prompt_res)
+        return prompt_res
         # Placeholder implementation - parses text manually
-        topics = self._extract_topics_placeholder(syllabus_text)
-        
-        return Syllabus(
-            title=subject_name,
-            description=f"Syllabus for {subject_name}",
-            topics=topics
-        )
+        # topics = self._extract_topics_placeholder(syllabus_text)
+        #
+        # return Syllabus(
+        #     title=subject_name,
+        #     description=f"Syllabus for {subject_name}",
+        #     topics=topics
+        # )
     
-    def _create_extraction_prompt(self, syllabus_text: str, subject_name: str) -> str:
+    def _create_extraction_prompt(self, syllabus_text: str, subject_name: str,schema: Syllabus) -> str:
         """
         Create a prompt for Gemini to extract structured syllabus data.
         
         TODO: Refine prompt for better extraction
         TODO: Add few-shot examples
         """
-        return f"""
+        prompt_text=f"""
 Extract structured learning content from the following syllabus text for the subject "{subject_name}".
-
-For each topic in the syllabus, extract:
-- name: The topic name
-- summary: A brief summary
-- key_points: Important points to remember (list)
-- differences: Key differences or contrasts (list)
-- mnemonics: Memory aids if applicable (list)
-- questions: Practice questions (list)
-- subtopics: Related subtopics (list)
-- prerequisites: Prerequisites for this topic (list)
 
 Syllabus Text:
 {syllabus_text}
 
 Return the result as a JSON object with this structure:
-{{
-  "topics": [
-    {{
-      "name": "Topic Name",
-      "summary": "Brief summary",
-      "key_points": ["Point 1", "Point 2"],
-      "differences": ["Difference 1"],
-      "mnemonics": ["Mnemonic 1"],
-      "questions": ["Question 1?"],
-      "subtopics": ["Subtopic 1"],
-      "prerequisites": ["Prereq 1"]
-    }}
-  ]
-}}
+```json
+{schema.schema_json(indent=2)}
+```
 """
+        return call_gemini(self.model, prompt_text,schema)
     
     def _parse_gemini_response(self, response_text: str) -> dict:
         """
@@ -108,57 +95,25 @@ Return the result as a JSON object with this structure:
         
         return json.loads(response_text)
     
-    def _extract_topics_placeholder(self, syllabus_text: str) -> list[Topic]:
-        """
-        Placeholder method to extract topics from text.
-        This will be replaced by actual Gemini processing.
-        """
-        # Check if input looks like JSON and reject it
-        if syllabus_text.strip().startswith('{') or syllabus_text.strip().startswith('['):
-            raise ValueError(
-                "Input appears to be JSON. Please provide plain text syllabus, "
-                "not JSON format. Use --syllabus-file with a .txt file."
-            )
-        
-        # Simple text parsing - split by lines and create topics
-        lines = [line.strip() for line in syllabus_text.split('\n') if line.strip()]
-        
-        # Filter out lines that look like JSON syntax
-        lines = [line for line in lines if not any(
-            line.startswith(c) for c in ['{', '}', '[', ']', '"']
-        ) and ':' not in line[:5]]
-        
-        topics = []
-        current_topic = None
-        
-        for line in lines:
-            # Simple heuristic: Lines with less than 100 chars and not starting with '-' are topic names
-            if len(line) < 100 and not line.startswith('-') and not line.startswith('•'):
-                if current_topic:
-                    topics.append(current_topic)
-                current_topic = Topic(
-                    name=line,
-                    summary=f"Content about {line}",
-                    key_points=[]
-                )
-            elif current_topic and (line.startswith('-') or line.startswith('•')):
-                # This is a key point
-                key_point = line.lstrip('-•').strip()
-                if key_point:  # Only add non-empty key points
-                    current_topic.key_points.append(key_point)
-        
-        if current_topic:
-            topics.append(current_topic)
-        
-        # If no topics found, create a single topic with all text
-        if not topics:
-            topics.append(Topic(
-                name="Main Content",
-                summary=syllabus_text[:200] + "..." if len(syllabus_text) > 200 else syllabus_text,
-                key_points=lines[:5] if len(lines) >= 5 else lines
-            ))
-        
-        return topics
+    # def _extract_topics_placeholder(self, syllabus: Syllabus) -> list[Topic]:
+    #     """
+    #     Placeholder method to extract topics from text.
+    #     This will be replaced by actual Gemini processing.
+    #     """
+    #
+    #
+    #     if current_topic:
+    #         topics.append(current_topic)
+    #
+    #     # If no topics found, create a single topic with all text
+    #     if not topics:
+    #         topics.append(Topic(
+    #             name="Main Content",
+    #             summary=syllabus_text[:200] + "..." if len(syllabus_text) > 200 else syllabus_text,
+    #             key_points=lines[:5] if len(lines) >= 5 else lines
+    #         ))
+    #
+    #     return topics
 
 
 def create_subject_folder(subject_name: str, base_path: str = "data/subjects") -> str:
@@ -185,3 +140,29 @@ def create_subject_folder(subject_name: str, base_path: str = "data/subjects") -
     (subject_path / "mindmaps").mkdir(exist_ok=True)
     
     return str(subject_path)
+
+
+def call_gemini(model: genai.GenerativeModel, prompt: str,schema: PydanticModel) -> str:
+    """
+    Call Gemini model with a prompt and return the response text.
+
+    Args:
+        model: Gemini GenerativeModel instance
+        prompt: Prompt string
+        schema: Pydantic model schema for response formatting
+
+    Returns:
+        Response as parsed Pydantic model
+    """
+    #final_prompt = prompt.format(schema=schema)
+    response = model.generate_content(prompt)
+    raw_text = response.text
+    json_string = raw_text.strip().lstrip('```json').rstrip('```').strip()
+    parsed_json = PydanticModel.parse_raw(schema,json_string)
+    try:
+        with open(f"{schema.__class__.__name__}.json", "w",encoding="utf-8") as f:
+            json.dump(parsed_json.dict(), f, indent=2, ensure_ascii=False)
+    except Exception as e:
+        print(f"Error saving JSON file: {e}")
+        logging.error(f"Error saving JSON file: {e}")
+    return parsed_json

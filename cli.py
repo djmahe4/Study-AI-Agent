@@ -3,12 +3,17 @@
 CLI tool for managing the AI Learning Engine.
 """
 import typer
+import sys
 import json
 from pathlib import Path
 from typing import Optional
 from rich.console import Console
 from rich.table import Table
 from rich import print as rprint
+from dotenv import load_dotenv
+import os
+import google.generativeai as genai
+import subprocess
 
 from core import (
     Topic, Syllabus, Question, Subject, KnowledgeBase,
@@ -25,6 +30,55 @@ console = Console()
 # Global state for current subject
 CURRENT_SUBJECT_FILE = "data/.current_subject"
 
+@app.command()
+def help(num=0):
+    """Show help information."""
+    if num==0:
+        rprint("[bold cyan]AI Learning Engine CLI[/bold cyan]")
+        rprint("Use the following commands to manage your learning resources:")
+        rprint("- [green]python web_app.py[/green]: Run the web interface")
+        rprint("- [green]init[/green]: Initialize the knowledge base")
+        rprint("- [green]create-subject[/green]: Create a new subject with syllabus processing")
+        rprint("- [green]list-subjects[/green]: List all created subjects")
+        rprint("- [green]select-subject[/green]: Select a subject to work with")
+        rprint("- [green]add-topic[/green]: Add a new topic to the knowledge base")
+        rprint("- [green]list-topics[/green]: List all topics in the knowledge base")
+        rprint("- [green]add-question[/green]: Add a question to the knowledge base")
+        rprint("- [green]list-questions[/green]: List questions, optionally filtered by topic")
+        rprint("- [green]generate-mindmap[/green]: Generate a mind map from all topics")
+        rprint("- [green]create-mnemonic[/green]: Create an acronym mnemonic from key points")
+        rprint("- [green]show-difference[/green]: Show an example difference table")
+        rprint("- [green]create-animation[/green]: Create an educational animation")
+        rprint("- [green]load-syllabus[/green]: Load a syllabus from a JSON file")
+        rprint("- [green]export-syllabus[/green]: Export all topics as a syllabus")
+        rprint("- [green]set-api-key[/green]: Set the Google API key for Gemini AI")
+        rprint("- [green]delete-subject <subject_name>[/green]: Delete a subject")
+        rprint("- [green]exit[/green]: Exit the CLI")
+
+@app.command()
+def set_api_key(api_key: str):
+    """Set the Google API key for Gemini AI."""
+    Path(".env").touch(exist_ok=True)
+    with open(".env", "a") as f:
+        f.write(f"GOOGLE_API_KEY={api_key}\n")
+    console.print("[green]API key set successfully![/green]")
+
+@app.command()
+def gemini_init():
+    #global model
+    """Initialize Gemini AI integration."""
+    load_dotenv()
+    try:
+        api_key = os.environ["GOOGLE_API_KEY"]
+    except KeyError:
+        console.print("[red]Error: GOOGLE_API_KEY not set in environment variables.[/red]")
+        console.print("[yellow]Please set the API key using /set-api-key command or in a .env file.[/yellow]")
+        raise typer.Exit(1)
+    genai.configure(api_key=api_key)
+    model = genai.GenerativeModel('gemini-2.5-flash')
+    console.print("[green]Gemini AI integration initialized (placeholder)[/green]")
+    return model
+
 
 @app.command()
 def init(db_path: str = "data/memory.db"):
@@ -39,7 +93,7 @@ def init(db_path: str = "data/memory.db"):
 def create_subject(
     subject_name: str = typer.Argument(..., help="Name of the subject"),
     syllabus_file: Optional[str] = typer.Option(None, help="Path to syllabus text file"),
-    question_bank: Optional[str] = typer.Option(None, help="Path to question bank PDF (use @ prefix)"),
+    question_bank: Optional[str] = typer.Option(None, help="Path to question bank PDF"), #(use @ prefix)
 ):
     """
     Create a new subject with syllabus processing via Gemini.
@@ -47,6 +101,9 @@ def create_subject(
     Example:
         python cli.py create-subject "Machine Learning" --syllabus-file syllabus.txt --question-bank @questions.pdf
     """
+    global model
+    # if not model:
+    #     model: genai.GenerativeModel = gemini_init()
     console.print(f"[cyan]Creating subject: {subject_name}[/cyan]")
     
     # Read syllabus text
@@ -54,40 +111,53 @@ def create_subject(
         with open(syllabus_file, 'r') as f:
             syllabus_text = f.read()
     else:
-        console.print("[yellow]No syllabus file provided. Enter syllabus text (Ctrl+D to finish):[/yellow]")
-        lines = []
+        # console.print("[yellow]No syllabus file provided. Enter syllabus text (Ctrl+D to finish):[/yellow]")
+        # lines = []
+        # try:
+        #     while True:
+        #         line = input()
+        #         lines.append(line)
+        # except EOFError:
+        #     pass
+        # syllabus_text = '\n'.join(lines)
         try:
-            while True:
-                line = input()
-                lines.append(line)
-        except EOFError:
-            pass
-        syllabus_text = '\n'.join(lines)
+            # Reads everything until Ctrl+D (Linux/macOS) or Ctrl+Z+Enter (Windows)
+            syllabus_text = sys.stdin.read()
+        except KeyboardInterrupt:
+            console.print("[red]Input cancelled by user.[/red]")
+            syllabus_text = ""
+
+        if syllabus_text.strip():
+            console.print("[green]Collected syllabus:[/green]")
+            console.print(syllabus_text)
+        else:
+            console.print("[red]No input provided.[/red]")
     
     if not syllabus_text.strip():
         console.print("[red]Error: No syllabus text provided[/red]")
         raise typer.Exit(1)
     
     # Process question bank path
-    qbank_path = None
-    if question_bank:
-        if question_bank.startswith('@'):
-            qbank_path = question_bank[1:]  # Remove @ prefix
-            if not Path(qbank_path).exists():
-                console.print(f"[yellow]Warning: Question bank file not found: {qbank_path}[/yellow]")
-                qbank_path = None
-            else:
-                console.print(f"[green]Question bank found: {qbank_path}[/green]")
-                # TODO: Initialize RAG tool for question bank
-                console.print("[yellow]RAG tool will process this question bank (TODO: implement)[/yellow]")
-    
+    #qbank_path = None
+    # if question_bank:
+    #     if question_bank.startswith('@'):
+            # qbank_path = question_bank[1:]  # Remove @ prefix
+    qbank_path=question_bank
+    if not Path(qbank_path).exists():
+        console.print(f"[yellow]Warning: Question bank file not found: {qbank_path}[/yellow]")
+        qbank_path = None
+    else:
+        console.print(f"[green]Question bank found: {qbank_path}[/green]")
+        # TODO: Initialize RAG tool for question bank
+        console.print("[yellow]RAG tool will process this question bank (TODO: implement)[/yellow]")
+
     # Create subject folder
     subject_folder = create_subject_folder(subject_name)
     console.print(f"[green]Subject folder created: {subject_folder}[/green]")
     
     # Process syllabus with Gemini
     console.print("[cyan]Processing syllabus with Gemini (placeholder)...[/cyan]")
-    processor = GeminiProcessor()
+    processor = GeminiProcessor(model)
     syllabus = processor.process_syllabus_text(syllabus_text, subject_name)
     
     if qbank_path:
@@ -113,23 +183,71 @@ def create_subject(
         with open(subjects_file, 'r') as f:
             subjects = json.load(f)
     
-    subjects.append({
-        "name": subject_name,
-        "folder_path": subject_folder,
-        "syllabus_path": syllabus_path,
-        "question_bank_path": qbank_path,
-        "created_at": str(subject.created_at)
-    })
+    # Check if subject already exists
+    existing_subject = next((s for s in subjects if s["name"] == subject_name), None)
+    
+    if existing_subject:
+        # Update existing subject
+        console.print(f"[yellow]Subject '{subject_name}' already exists. Updating it.[/yellow]")
+        existing_subject.update({
+            "folder_path": subject_folder,
+            "syllabus_path": syllabus_path,
+            "question_bank_path": qbank_path,
+            "created_at": str(subject.created_at)
+        })
+    else:
+        # Add new subject
+        subjects.append({
+            "name": subject_name,
+            "folder_path": subject_folder,
+            "syllabus_path": syllabus_path,
+            "question_bank_path": qbank_path,
+            "created_at": str(subject.created_at)
+        })
     
     with open(subjects_file, 'w') as f:
         json.dump(subjects, f, indent=2)
     
-    console.print(f"\n[green]✅ Subject '{subject_name}' created successfully![/green]")
+    console.print(f"\n[green]✅ Subject '{subject_name}' created/updated successfully![/green]")
     console.print(f"[cyan]Extracted {len(syllabus.topics)} topics from syllabus[/cyan]")
     
     # Set as current subject
     _set_current_subject(subject_name)
     console.print(f"[yellow]Set '{subject_name}' as current subject[/yellow]")
+
+
+@app.command()
+def delete_subject(subject_name: str = typer.Argument(..., help="Name of the subject to delete")):
+    """Delete a subject."""
+    subjects_file = "data/subjects/subjects.json"
+    
+    if not Path(subjects_file).exists():
+        console.print("[red]No subjects found.[/red]")
+        raise typer.Exit(1)
+    
+    with open(subjects_file, 'r') as f:
+        subjects = json.load(f)
+    
+    subject_to_delete = next((s for s in subjects if s["name"] == subject_name), None)
+    
+    if not subject_to_delete:
+        console.print(f"[red]Subject '{subject_name}' not found.[/red]")
+        raise typer.Exit(1)
+    
+    if typer.confirm(f"Are you sure you want to delete the subject '{subject_name}'?"):
+        subjects = [s for s in subjects if s["name"] != subject_name]
+        
+        with open(subjects_file, 'w') as f:
+            json.dump(subjects, f, indent=2)
+        
+        console.print(f"[green]Subject '{subject_name}' deleted successfully.[/green]")
+        
+        if typer.confirm("Do you also want to delete the subject's folder and all its contents?"):
+            import shutil
+            shutil.rmtree(subject_to_delete["folder_path"])
+            console.print(f"[green]Subject folder '{subject_to_delete['folder_path']}' deleted.[/green]")
+    else:
+        console.print("Deletion cancelled.")
 
 
 @app.command()
@@ -321,7 +439,22 @@ def create_mnemonic(topic: str, key_points: str):
     console.print(f"[cyan]Technique:[/cyan] {mnemonic.technique}")
     console.print(f"[green]Mnemonic:[/green] {mnemonic.content}")
     console.print(f"[yellow]Explanation:[/yellow] {mnemonic.explanation}")
-
+@app.command()
+def run_web():
+    global web_proc
+    """Run the web interface."""
+    console.print("[cyan]Starting web interface...[/cyan]")
+    try:
+        web_proc=subprocess.Popen([sys.executable, "streamlit/app.py"])
+    except Exception as e:
+        console.print(f"[red]Failed to start web interface: {e}[/red]")
+@app.command()
+def stop_web():
+    global web_proc
+    """Stop the web interface."""
+    console.print("[cyan]Stopping web interface...[/cyan]")
+    if web_proc:
+        web_proc.terminate()
 
 @app.command()
 def show_difference(example: str = "tcp_vs_udp"):
@@ -396,7 +529,25 @@ def export_syllabus(output_path: str = "data/syllabus/export.json"):
     
     save_syllabus_to_json(syllabus, output_path)
     console.print(f"[green]Syllabus exported to {output_path}[/green]")
-
+@app.command()
+def exit():
+    """Exit the CLI."""
+    console.print("[cyan]Exiting AI Learning Engine CLI. Goodbye![/cyan]")
+    raise typer.Exit()
+@app.callback(invoke_without_command=True)
+def main(ctx: typer.Context):
+    while True:
+        if ctx.invoked_subcommand is None:
+            help()
+            input=typer.prompt("Enter command (or 'exit' to quit)")
+            if input.lower()=="exit":
+                break
+            app(input.strip().split())
 
 if __name__ == "__main__":
-    app()
+    try:
+        app()
+    except Exception as e:
+        import traceback
+        traceback.print_exc()
+        console.print(f"[red]An error occurred: {e}[/red]")

@@ -18,7 +18,7 @@ An AI-augmented intelligent learning system that teaches with mind maps, animati
 ## 🏗️ Architecture
 
 ```
-learning-ai/
+Study-AI-Agent/
 ├─ data/                    # Data storage
 │   ├─ syllabus/           # Syllabus JSON files
 │   ├─ qbank/              # Question banks

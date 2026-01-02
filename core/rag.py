@@ -3,8 +3,8 @@ Module for RAG (Retrieval Augmented Generation) functionality.
 This is a placeholder for future LLM integration.
 """
 from typing import List, Optional
-from .models import Topic, Question
-
+from core.models import Topic, Question
+import fitz
 
 class RAGEngine:
     """

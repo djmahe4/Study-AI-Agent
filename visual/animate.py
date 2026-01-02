@@ -217,3 +217,9 @@ def create_stack_animation(output_path: str = "data/animations/stack.mp4") -> st
     
     animator.save_video(output_path)
     return output_path
+if __name__ == "__main__":
+    tcp_animation_path = create_tcp_handshake_animation()
+    print(f"TCP Handshake animation saved to: {tcp_animation_path}")
+
+    stack_animation_path = create_stack_animation()
+    print(f"Stack animation saved to: {stack_animation_path}")
