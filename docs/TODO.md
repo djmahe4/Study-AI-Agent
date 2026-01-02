@@ -3,11 +3,11 @@
 ## Recently Completed ✅
 
 ### CLI Improvements (v1.1)
-- ✅ Fixed interactive mode command execution
-- ✅ Added proper error handling for invalid commands
-- ✅ Improved command parsing with quoted string support
-- ✅ Fixed global variable initialization issues
-- ✅ Enhanced user experience with better prompts and feedback
+- [x] Fixed interactive mode command execution
+- [x] Added proper error handling for invalid commands
+- [x] Improved command parsing with quoted string support
+- [x] Fixed global variable initialization issues
+- [x] Enhanced user experience with better prompts and feedback
 
 ## High Priority
 

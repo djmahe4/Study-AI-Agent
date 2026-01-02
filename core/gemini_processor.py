@@ -56,7 +56,7 @@ class GeminiProcessor:
         #     topics=topics
         # )
     
-    def _create_extraction_prompt(self, syllabus_text: str, subject_name: str,schema: Syllabus) -> str:
+    def _create_extraction_prompt(self, syllabus_text: str, subject_name: str) -> str:
         """
         Create a prompt for Gemini to extract structured syllabus data.
         
@@ -71,10 +71,10 @@ Syllabus Text:
 
 Return the result as a JSON object with this structure:
 ```json
-{schema.schema_json(indent=2)}
+{Syllabus.schema_json(indent=2)}
 ```
 """
-        return call_gemini(self.model, prompt_text,schema)
+        return call_gemini(self.model, prompt_text,Syllabus.schema_json(indent=2))
     
     def _parse_gemini_response(self, response_text: str) -> dict:
         """
