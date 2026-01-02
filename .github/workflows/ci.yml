@@ -39,29 +39,35 @@ jobs:
       
       - name: Test CLI Help Command
         run: |
+          source .venv/bin/activate
           python cli.py --help
       
       - name: Test CLI Init Command
         run: |
+          source .venv/bin/activate
           python cli.py init
       
       - name: Test CLI List Commands
         run: |
+          source .venv/bin/activate
           python cli.py list-subjects || true
           python cli.py list-topics || true
       
       - name: Test Interactive Mode (Basic)
         run: |
+          source .venv/bin/activate
           echo -e "help\nexit" | python cli.py
       
       - name: Verify Core Imports
         run: |
+          source .venv/bin/activate
           python -c "from core import Topic, Syllabus, Question, Subject, KnowledgeBase"
           python -c "from core.gemini_processor import GeminiProcessor"
           python -c "from core.rag import RAGEngine"
       
       - name: Check CLI Syntax
         run: |
+          source .venv/bin/activate
           python -m py_compile cli.py
           python -m py_compile core/*.py
 
@@ -119,7 +125,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.9'
       
       - name: Install security tools
         run: |
@@ -175,7 +181,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.9'
       
       - name: Install linting tools
         run: |
@@ -207,7 +213,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.9'
       
       - name: Install dependencies
         run: |
@@ -231,11 +237,13 @@ jobs:
       
       - name: Test subject creation workflow
         run: |
+          source .venv/bin/activate
           python cli.py init
           python cli.py create-subject "Test Subject" --syllabus-file test_data/test_syllabus.txt || echo "Subject creation test completed"
       
       - name: Test topic and question commands
         run: |
+          source .venv/bin/activate
           python cli.py add-topic "Test Topic" --summary "Test summary" --key-points "Point1,Point2,Point3"
           python cli.py list-topics
           python cli.py add-question "Test Topic" "What is test?" "This is a test" --difficulty easy
@@ -243,6 +251,7 @@ jobs:
       
       - name: Test learning aids generation
         run: |
+          source .venv/bin/activate
           python cli.py show-difference --example tcp_vs_udp || true
           python cli.py generate-mindmap || true
       
@@ -264,7 +273,7 @@ jobs:
       - name: Set up Python
         uses: actions/setup-python@v5
         with:
-          python-version: '3.8'
+          python-version: '3.9'
       
       - name: Check Python dependencies
         run: |
