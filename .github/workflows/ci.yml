@@ -96,7 +96,8 @@ jobs:
       - name: Check for Node.js vulnerabilities
         working-directory: ./frontend
         run: |
-          npm audit --audit-level=moderate || echo "Audit warnings found"
+          npm audit --audit-level=moderate
+        continue-on-error: true
 
   security-check:
     name: Security Analysis

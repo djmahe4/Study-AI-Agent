@@ -69,19 +69,32 @@ def set_api_key(api_key: str):
 
 @app.command()
 def gemini_init():
-    #global model
     """Initialize Gemini AI integration."""
+    global model
     load_dotenv()
     try:
         api_key = os.environ["GOOGLE_API_KEY"]
     except KeyError:
         console.print("[red]Error: GOOGLE_API_KEY not set in environment variables.[/red]")
-        console.print("[yellow]Please set the API key using /set-api-key command or in a .env file.[/yellow]")
+        console.print("[yellow]Please set the API key using set-api-key command or in a .env file.[/yellow]")
         raise typer.Exit(1)
     genai.configure(api_key=api_key)
     model = genai.GenerativeModel('gemini-2.5-flash')
-    console.print("[green]Gemini AI integration initialized (placeholder)[/green]")
+    console.print("[green]Gemini AI integration initialized[/green]")
     return model
+
+
+def _init_gemini_model():
+    """Internal function to initialize Gemini model without CLI context."""
+    load_dotenv()
+    try:
+        api_key = os.environ["GOOGLE_API_KEY"]
+    except KeyError:
+        console.print("[red]Error: GOOGLE_API_KEY not set in environment variables.[/red]")
+        console.print("[yellow]Please set the API key using set-api-key command or in a .env file.[/yellow]")
+        raise typer.Exit(1)
+    genai.configure(api_key=api_key)
+    return genai.GenerativeModel('gemini-2.5-flash')
 
 
 @app.command()
@@ -107,7 +120,7 @@ def create_subject(
     """
     global model
     if not model:
-        model = gemini_init()
+        model = _init_gemini_model()
     console.print(f"[cyan]Creating subject: {subject_name}[/cyan]")
     
     # Read syllabus text
