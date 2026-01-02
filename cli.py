@@ -30,30 +30,33 @@ console = Console()
 # Global state for current subject
 CURRENT_SUBJECT_FILE = "data/.current_subject"
 
+# Global variables
+model = None
+web_proc = None
+
 @app.command()
-def help(num=0):
+def help():
     """Show help information."""
-    if num==0:
-        rprint("[bold cyan]AI Learning Engine CLI[/bold cyan]")
-        rprint("Use the following commands to manage your learning resources:")
-        rprint("- [green]python web_app.py[/green]: Run the web interface")
-        rprint("- [green]init[/green]: Initialize the knowledge base")
-        rprint("- [green]create-subject[/green]: Create a new subject with syllabus processing")
-        rprint("- [green]list-subjects[/green]: List all created subjects")
-        rprint("- [green]select-subject[/green]: Select a subject to work with")
-        rprint("- [green]add-topic[/green]: Add a new topic to the knowledge base")
-        rprint("- [green]list-topics[/green]: List all topics in the knowledge base")
-        rprint("- [green]add-question[/green]: Add a question to the knowledge base")
-        rprint("- [green]list-questions[/green]: List questions, optionally filtered by topic")
-        rprint("- [green]generate-mindmap[/green]: Generate a mind map from all topics")
-        rprint("- [green]create-mnemonic[/green]: Create an acronym mnemonic from key points")
-        rprint("- [green]show-difference[/green]: Show an example difference table")
-        rprint("- [green]create-animation[/green]: Create an educational animation")
-        rprint("- [green]load-syllabus[/green]: Load a syllabus from a JSON file")
-        rprint("- [green]export-syllabus[/green]: Export all topics as a syllabus")
-        rprint("- [green]set-api-key[/green]: Set the Google API key for Gemini AI")
-        rprint("- [green]delete-subject <subject_name>[/green]: Delete a subject")
-        rprint("- [green]exit[/green]: Exit the CLI")
+    rprint("[bold cyan]AI Learning Engine CLI[/bold cyan]")
+    rprint("Use the following commands to manage your learning resources:")
+    rprint("- [green]python web_app.py[/green]: Run the web interface")
+    rprint("- [green]init[/green]: Initialize the knowledge base")
+    rprint("- [green]create-subject[/green]: Create a new subject with syllabus processing")
+    rprint("- [green]list-subjects[/green]: List all created subjects")
+    rprint("- [green]select-subject[/green]: Select a subject to work with")
+    rprint("- [green]add-topic[/green]: Add a new topic to the knowledge base")
+    rprint("- [green]list-topics[/green]: List all topics in the knowledge base")
+    rprint("- [green]add-question[/green]: Add a question to the knowledge base")
+    rprint("- [green]list-questions[/green]: List questions, optionally filtered by topic")
+    rprint("- [green]generate-mindmap[/green]: Generate a mind map from all topics")
+    rprint("- [green]create-mnemonic[/green]: Create an acronym mnemonic from key points")
+    rprint("- [green]show-difference[/green]: Show an example difference table")
+    rprint("- [green]create-animation[/green]: Create an educational animation")
+    rprint("- [green]load-syllabus[/green]: Load a syllabus from a JSON file")
+    rprint("- [green]export-syllabus[/green]: Export all topics as a syllabus")
+    rprint("- [green]set-api-key[/green]: Set the Google API key for Gemini AI")
+    rprint("- [green]delete-subject <subject_name>[/green]: Delete a subject")
+    rprint("- [green]exit[/green]: Exit the CLI")
 
 @app.command()
 def set_api_key(api_key: str):
@@ -102,8 +105,8 @@ def create_subject(
         python cli.py create-subject "Machine Learning" --syllabus-file syllabus.txt --question-bank @questions.pdf
     """
     global model
-    # if not model:
-    #     model: genai.GenerativeModel = gemini_init()
+    if not model:
+        model = gemini_init()
     console.print(f"[cyan]Creating subject: {subject_name}[/cyan]")
     
     # Read syllabus text
@@ -138,15 +141,11 @@ def create_subject(
         raise typer.Exit(1)
     
     # Process question bank path
-    #qbank_path = None
-    # if question_bank:
-    #     if question_bank.startswith('@'):
-            # qbank_path = question_bank[1:]  # Remove @ prefix
-    qbank_path=question_bank
-    if not Path(qbank_path).exists():
+    qbank_path = question_bank
+    if qbank_path and not Path(qbank_path).exists():
         console.print(f"[yellow]Warning: Question bank file not found: {qbank_path}[/yellow]")
         qbank_path = None
-    else:
+    elif qbank_path:
         console.print(f"[green]Question bank found: {qbank_path}[/green]")
         # TODO: Initialize RAG tool for question bank
         console.print("[yellow]RAG tool will process this question bank (TODO: implement)[/yellow]")
@@ -536,13 +535,37 @@ def exit():
     raise typer.Exit()
 @app.callback(invoke_without_command=True)
 def main(ctx: typer.Context):
-    while True:
-        if ctx.invoked_subcommand is None:
-            help()
-            input=typer.prompt("Enter command (or 'exit' to quit)")
-            if input.lower()=="exit":
+    """Main callback for interactive mode."""
+    if ctx.invoked_subcommand is None:
+        # Interactive mode
+        while True:
+            try:
+                help()
+                user_input = typer.prompt("\nEnter command (or 'exit' to quit)")
+                if user_input.lower() == "exit":
+                    console.print("[cyan]Exiting AI Learning Engine CLI. Goodbye![/cyan]")
+                    break
+                
+                # Parse command and execute
+                try:
+                    # Split command into parts while respecting quoted strings
+                    import shlex
+                    args = shlex.split(user_input.strip())
+                    if args:
+                        # Invoke the app with the parsed arguments
+                        app(args, standalone_mode=False)
+                except SystemExit:
+                    # Typer commands may raise SystemExit, catch and continue
+                    pass
+                except Exception as e:
+                    console.print(f"[red]Error executing command: {e}[/red]")
+                    console.print("[yellow]Type 'help' to see available commands[/yellow]")
+            except KeyboardInterrupt:
+                console.print("\n[yellow]Use 'exit' command to quit[/yellow]")
+                continue
+            except EOFError:
+                console.print("\n[cyan]Exiting...[/cyan]")
                 break
-            app(input.strip().split())
 
 if __name__ == "__main__":
     try:
