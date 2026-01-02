@@ -7,6 +7,7 @@ numpy==1.26.2
 streamlit==1.29.0
 pandas==2.1.4
 pydot==1.4.2
+typer==0.9.0
 dotenv
 google-generativeai
 pymupdf
