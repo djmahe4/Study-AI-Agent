@@ -1,4 +1,4 @@
-# 🧠 AI Learning Engine
+# 🧠 Study-AI-Agent: AI Learning Engine
 
 An AI-augmented intelligent learning system that teaches with mind maps, animations, structured knowledge, and interactive learning tools.
 

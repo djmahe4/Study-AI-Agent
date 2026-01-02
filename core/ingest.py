@@ -124,7 +124,7 @@ class KnowledgeBase:
 
 def load_syllabus_from_json(file_path: str) -> Syllabus:
     """Load a syllabus from a JSON file."""
-    with open(file_path, 'r') as f:
+    with open(file_path, 'r',encoding='utf-8') as f:
         data = json.load(f)
     return Syllabus(**data)
 
@@ -132,5 +132,5 @@ def load_syllabus_from_json(file_path: str) -> Syllabus:
 def save_syllabus_to_json(syllabus: Syllabus, file_path: str) -> None:
     """Save a syllabus to a JSON file."""
     Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(file_path, 'w') as f:
+    with open(file_path, 'w',encoding='utf-8') as f:
         json.dump(syllabus.model_dump(), f, indent=2, default=str)

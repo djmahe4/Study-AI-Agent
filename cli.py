@@ -194,30 +194,24 @@ def create_subject(
     subjects = []
     if Path(subjects_file).exists():
         with open(subjects_file, 'r') as f:
-            subjects = json.load(f)
-    
-    # Check if subject already exists
-    existing_subject = next((s for s in subjects if s["name"] == subject_name), None)
-    
+            try:
+                subjects = json.load(f)
+            except json.JSONDecodeError:
+                subjects = []
+
+    existing_subject = next((s for s in subjects if s['name'] == subject_name), None)
     if existing_subject:
-        # Update existing subject
-        console.print(f"[yellow]Subject '{subject_name}' already exists. Updating it.[/yellow]")
-        existing_subject.update({
-            "folder_path": subject_folder,
-            "syllabus_path": syllabus_path,
-            "question_bank_path": qbank_path,
-            "created_at": str(subject.created_at)
-        })
-    else:
-        # Add new subject
-        subjects.append({
-            "name": subject_name,
-            "folder_path": subject_folder,
-            "syllabus_path": syllabus_path,
-            "question_bank_path": qbank_path,
-            "created_at": str(subject.created_at)
-        })
-    
+        console.print(f"[red]Error: Subject '{subject_name}' already exists.[/red]")
+        raise typer.Exit(1)
+
+    subjects.append({
+        "name": subject_name,
+        "folder_path": subject_folder,
+        "syllabus_path": syllabus_path,
+        "question_bank_path": qbank_path,
+        "created_at": str(subject.created_at)
+    })
+
     with open(subjects_file, 'w') as f:
         json.dump(subjects, f, indent=2)
     

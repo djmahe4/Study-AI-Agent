@@ -2,7 +2,7 @@
 Pydantic models for structured knowledge representation.
 """
 from pydantic import BaseModel, Field
-from typing import List, Optional
+from typing import List, Optional, Literal
 from datetime import datetime
 
 
@@ -49,8 +49,8 @@ class Question(BaseModel):
     topic: str
     question: str
     answer: str
-    difficulty: str = Field(default="medium", description="easy, medium, hard")
-    type: str = Field(default="multiple_choice", description="Question type")
+    difficulty: Literal["easy", "medium", "hard"] = Field(default="medium", description="Difficulty level")
+    type: Literal["multiple_choice", "open_ended"] = Field(default="multiple_choice", description="Question type")
     options: List[str] = Field(default_factory=list, description="Answer options for MCQ")
 
 
