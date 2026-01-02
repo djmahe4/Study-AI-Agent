@@ -565,8 +565,8 @@ def main(ctx: typer.Context):
                     # Split command into parts while respecting quoted strings
                     args = shlex.split(user_input.strip())
                     if args:
-                        # Invoke the app with the parsed arguments
-                        app.main(args, standalone_mode=False)
+                        # Invoke the app with the parsed arguments - Typer apps are callable
+                        app(args, standalone_mode=False)
                 except SystemExit:
                     # Typer commands may raise SystemExit, catch and continue
                     pass
