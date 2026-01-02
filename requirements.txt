@@ -9,6 +9,8 @@ pandas==2.1.4
 pydot==1.4.2
 typer
 dotenv
-google-generativeai
+google-genai
+pytesseract
+DrissionPage
 pymupdf
 icecream
