@@ -2,7 +2,9 @@
 Module for RAG (Retrieval Augmented Generation) functionality.
 Includes PDF text extraction (with OCR fallback) and YouTube search integration.
 """
+import time
 from typing import List, Optional, Dict, Any
+from urllib.parse import quote
 from pathlib import Path
 import logging
 import fitz  # PyMuPDF
@@ -10,6 +12,7 @@ import pytesseract
 from PIL import Image
 import numpy as np
 from core.models import Topic, Question
+from visual.cli_viz import single_line_viz
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -145,18 +148,20 @@ class YouTubeSearcher:
         query = f"{course_name} {topic}"
         if university:
             query += f" {university}"
+
             
         logger.info(f"Searching YouTube for: {query}")
-        
+        encoded_query= quote(query)
         results = []
         
         if HAS_DRISSION:
             try:
                 # Placeholder for DrissionPage logic
-                # self.page = ChromiumPage()
-                # self.page.get(f"https://www.youtube.com/results?search_query={query}")
+                self.page = ChromiumPage()
+                self.page.get(f"https://www.youtube.com/results?search_query={encoded_query}")
                 # ... extract video links and subtitles ...
-                
+                single_line_viz("Choose video!!...")
+                time.sleep(10)
                 # Since we can't fully run a browser in this headless/cli env often, 
                 # this serves as the structural placeholder requested.
                 

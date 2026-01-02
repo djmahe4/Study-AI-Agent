@@ -134,8 +134,9 @@ Return the result as a valid JSON object matching the following structure:
                     model=self.model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        response_mime_type="application/json"
-                    )
+                        response_mime_type="application/json",
+                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        )
                 )
                 response_text = response.text
                 # 3. Save to Cache
