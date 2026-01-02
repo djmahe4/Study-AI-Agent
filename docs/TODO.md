@@ -1,5 +1,14 @@
 # TODO: Future Enhancements
 
+## Recently Completed ✅
+
+### CLI Improvements (v1.1)
+- ✅ Fixed interactive mode command execution
+- ✅ Added proper error handling for invalid commands
+- ✅ Improved command parsing with quoted string support
+- ✅ Fixed global variable initialization issues
+- ✅ Enhanced user experience with better prompts and feedback
+
 ## High Priority
 
 ### 1. Gemini Integration
