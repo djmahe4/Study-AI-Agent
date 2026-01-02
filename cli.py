@@ -5,6 +5,7 @@ CLI tool for managing the AI Learning Engine.
 import typer
 import sys
 import json
+import shlex
 from pathlib import Path
 from typing import Optional
 from rich.console import Console
@@ -549,11 +550,10 @@ def main(ctx: typer.Context):
                 # Parse command and execute
                 try:
                     # Split command into parts while respecting quoted strings
-                    import shlex
                     args = shlex.split(user_input.strip())
                     if args:
                         # Invoke the app with the parsed arguments
-                        app(args, standalone_mode=False)
+                        app.main(args, standalone_mode=False)
                 except SystemExit:
                     # Typer commands may raise SystemExit, catch and continue
                     pass

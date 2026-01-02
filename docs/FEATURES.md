@@ -1,5 +1,11 @@
 # ✅ Implemented Features
 
+## Recent Updates (v1.1)
+- ✅ **Interactive CLI Mode**: Run `python cli.py` without arguments for interactive command prompt
+- ✅ **Improved Error Handling**: Clear error messages for invalid commands
+- ✅ **Enhanced Command Parsing**: Support for quoted arguments and complex commands
+- ✅ **Better User Experience**: Smooth command execution with proper exit handling
+
 ## Subject Management
 - ✅ `create-subject` command with syllabus text processing
 - ✅ Subject folder structure (animations, mindmaps, notes, questions, syllabus)

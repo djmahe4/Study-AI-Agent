@@ -69,6 +69,27 @@ Study-AI-Agent/
 
 ### Usage
 
+#### Interactive Mode (New!)
+
+Run the CLI without arguments to enter interactive mode:
+```bash
+python cli.py
+```
+
+In interactive mode, you can:
+- Type any command without the `python cli.py` prefix
+- Get immediate help with `help` command
+- Use quoted strings for arguments with spaces
+- Exit anytime with `exit` command
+
+**Example interactive session:**
+```
+Enter command (or 'exit' to quit): help
+Enter command (or 'exit' to quit): list-subjects
+Enter command (or 'exit' to quit): add-topic "Python Basics" --summary "Introduction to Python"
+Enter command (or 'exit' to quit): exit
+```
+
 #### Creating a Subject
 
 **Create a subject from a syllabus file:**
@@ -98,60 +119,53 @@ python cli.py list-subjects
 python cli.py select-subject "Machine Learning"
 ```
 
-#### Python CLI
+#### Python CLI Commands
 
-Initialize the knowledge base:
+**Available commands (run directly or in interactive mode):**
+
 ```bash
-python cli.py init
+# System initialization
+python cli.py init                    # Initialize knowledge base
+
+# Subject management
+python cli.py list-subjects           # List all subjects
+python cli.py select-subject "ML"     # Select active subject
+python cli.py delete-subject "ML"     # Delete a subject
+
+# Topic management  
+python cli.py add-topic "Topic Name" --summary "..." --key-points "A,B,C"
+python cli.py list-topics             # List topics
+
+# Question management
+python cli.py add-question "Topic" "Question?" "Answer" --difficulty easy
+python cli.py list-questions          # List all questions
+
+# Learning aids
+python cli.py generate-mindmap        # Generate mind map
+python cli.py create-animation tcp    # Create animation (tcp/stack)
+python cli.py show-difference --example tcp_vs_udp
+python cli.py create-mnemonic "Topic" "Key,Points"
+
+# Syllabus operations
+python cli.py load-syllabus file.json # Import syllabus
+python cli.py export-syllabus         # Export current syllabus
+
+# Configuration
+python cli.py set-api-key YOUR_KEY    # Set Gemini API key
 ```
 
-Add a topic:
-```bash
-python cli.py add-topic "Machine Learning" --summary "Study of algorithms that learn from data" --key-points "Supervised learning, Unsupervised learning, Neural networks"
-```
+**Pro tip:** Use `python cli.py COMMAND --help` for detailed help on any command.
 
-List all topics:
-```bash
-python cli.py list-topics
-```
+#### React Terminal CLI (Optional)
 
-Generate a mind map:
-```bash
-python cli.py generate-mindmap --output-format json
-```
-
-Create an animation:
-```bash
-python cli.py create-animation tcp
-```
-
-Load a syllabus:
-```bash
-python cli.py load-syllabus data/syllabus/example.json
-```
-
-#### React Terminal CLI
-
-Start the React-based terminal interface:
+For a browser-based terminal experience:
 ```bash
 cd frontend
 npm run dev
+# Open http://localhost:3000
 ```
 
-Open your browser to `http://localhost:3000` and use the terminal-style interface.
-
-Available commands in React CLI:
-- `help` - Show available commands
-- `topics` - List all topics
-- `add-topic <name>` - Add a new topic
-- `questions [topic]` - List questions
-- `quiz [topic]` - Start quiz mode
-- `mindmap` - Generate mind map visualization
-- `mnemonic <topic>` - Generate mnemonics
-- `differences <example>` - Show comparison tables (tcp_vs_udp, stack_vs_queue)
-- `animate <type>` - Create animations (tcp, stack)
-- `clear` - Clear terminal
-- `exit` - Exit application
+See [FEATURES.md](FEATURES.md) for available React CLI commands.
 
 #### Streamlit Web UI
 
@@ -209,15 +223,21 @@ create_tcp_handshake_animation("output.mp4")
 4. **Comparative Learning**: Difference tables for contrasting concepts
 5. **Structured Knowledge**: Organized hierarchical content
 
-## 🔮 Future Enhancements
+## 📚 Documentation
 
-- [ ] LLM integration (LangChain/Gemini) for RAG
-- [ ] Advanced animation types (blockchain, neural networks)
-- [ ] Spaced repetition algorithm
-- [ ] Interactive simulations in Streamlit
-- [ ] Voice-based learning mode
-- [ ] Export to Anki/flashcard formats
-- [ ] Collaborative learning features
+- **[docs/QUICKSTART.md](docs/QUICKSTART.md)** - Get started in 5 minutes
+- **[docs/FEATURES.md](docs/FEATURES.md)** - Complete feature list and examples
+- **[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** - Add Gemini/RAG integration
+- **[docs/TODO.md](docs/TODO.md)** - Planned enhancements and roadmap
+
+## 🔮 Recent Updates
+
+**v1.1 - CLI Fixes (Latest)**
+- ✅ Fixed interactive mode command execution
+- ✅ Added proper error handling for invalid commands
+- ✅ Improved command parsing with quoted string support
+- ✅ Fixed global variable initialization issues
+- ✅ Enhanced user experience with better prompts
 
 ## 🛠️ Technologies
 
