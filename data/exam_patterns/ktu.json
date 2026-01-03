@@ -1,0 +1,55 @@
+{
+  "name": "ktu",
+  "sections": [
+    {
+      "name": "Part A",
+      "question_range": [
+        1,
+        10
+      ],
+      "marks_per_question": 3,
+      "has_choice": false
+    },
+    {
+      "name": "Part B",
+      "question_range": [
+        11,
+        20
+      ],
+      "marks_per_question": 14,
+      "has_choice": true
+    }
+  ],
+  "module_mapping": {
+    "1": [
+      1,
+      2,
+      11,
+      12
+    ],
+    "2": [
+      3,
+      4,
+      13,
+      14
+    ],
+    "3": [
+      5,
+      6,
+      15,
+      16
+    ],
+    "4": [
+      7,
+      8,
+      17,
+      18
+    ],
+    "5": [
+      9,
+      10,
+      19,
+      20
+    ]
+  }
+}

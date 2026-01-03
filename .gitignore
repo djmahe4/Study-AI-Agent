@@ -221,3 +221,6 @@ data/mindmap.json
 data/mindmap.dot
 data
 .idea
+
+# Gemini
+GEMINI.md

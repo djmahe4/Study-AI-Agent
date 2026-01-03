@@ -7,36 +7,34 @@ An AI-augmented intelligent learning system that teaches with mind maps, animati
 ## ✨ Features
 
 - **📚 Structured Knowledge**: Pydantic-based data models for organizing learning content
-- **🗺️ Mind Maps**: NetworkX-powered concept visualization
-- **🎬 Animations**: OpenCV-based educational animations
+- **🗺️ Mind Maps**: Mermaid.js concepts visualization embedded in Markdown
+- **🎬 Animations**: AI-generated educational animations (GIF/Video) using OpenCV
 - **❓ Quiz Mode**: Interactive Q&A with retrieval practice
 - **📊 Difference Tables**: Learning through contrasts and comparisons
 - **🧠 Mnemonics**: Memory aids and cognitive learning techniques
-- **💻 CLI Interface**: Both Python and React-based terminal interfaces
-- **🌐 Streamlit UI**: Web-based learning dashboard
+- **📝 Exam Analysis**: Automated parsing of PDF question papers and answer generation
+- **💻 CLI Interface**: Rich interactive terminal interface
+- **🌐 Streamlit UI**: Web-based learning dashboard with schema editing
 
 ## 🏗️ Architecture
 
 ```
 Study-AI-Agent/
 ├─ data/                    # Data storage
-│   ├─ syllabus/           # Syllabus JSON files
-│   ├─ qbank/              # Question banks
+│   ├─ subjects/           # Subject data (syllabus, notes, questions)
+│   ├─ exam_patterns/      # Exam structure definitions
 │   └─ memory.db           # SQLite knowledge base
 ├─ core/                    # Core Python modules
-│   ├─ models.py           # Pydantic models
+│   ├─ models.py           # Pydantic models (Topic, ExamPattern, etc.)
 │   ├─ ingest.py           # Data ingestion
-│   ├─ rag.py              # RAG engine (placeholder)
+│   ├─ rag.py              # RAG engine (YouTube, Video Analysis)
+│   ├─ exam_analysis.py    # PDF Question Paper Analysis
 │   └─ mnemonics.py        # Mnemonic generation
 ├─ visual/                  # Visualization
-│   ├─ mindmap.py          # Mind map generation
-│   └─ animate.py          # Animation creation
+│   ├─ mindmap_v2.py       # Mermaid mind map generation
+│   └─ animate.py          # Animation rendering engine
 ├─ streamlit/               # Streamlit web UI
 │   └─ app.py
-├─ frontend/                # React CLI interface
-│   └─ src/
-│       ├─ Terminal.jsx    # CLI component
-│       └─ App.jsx
 └─ cli.py                   # Python CLI tool
 ```
 
@@ -45,8 +43,7 @@ Study-AI-Agent/
 ### Prerequisites
 
 - Python 3.8+
-- Node.js 18+
-- npm or yarn
+- Node.js 18+ (for optional React frontend)
 
 ### Installation
 
@@ -61,111 +58,47 @@ Study-AI-Agent/
    pip install -r requirements.txt
    ```
 
-3. **Install Node.js dependencies**
-   ```bash
-   cd frontend
-   npm install
-   ```
-
 ### Usage
 
-#### Interactive Mode (New!)
+#### Interactive Mode
 
 Run the CLI without arguments to enter interactive mode:
 ```bash
 python cli.py
 ```
 
-In interactive mode, you can:
-- Type any command without the `python cli.py` prefix
-- Get immediate help with `help` command
-- Use quoted strings for arguments with spaces
-- Exit anytime with `exit` command
-
 **Example interactive session:**
 ```
 Enter command (or 'exit' to quit): help
-Enter command (or 'exit' to quit): list-subjects
-Enter command (or 'exit' to quit): add-topic "Python Basics" --summary "Introduction to Python"
+Enter command (or 'exit' to quit): create-subject "Data Structures"
+Enter command (or 'exit' to quit): ask-youtube "https://youtu.be/..." --topic "Stacks"
 Enter command (or 'exit' to quit): exit
 ```
 
-#### Creating a Subject
+#### Key Workflows
 
-**Create a subject from a syllabus file:**
+**1. Create a Subject**
 ```bash
 python cli.py create-subject "Machine Learning" --syllabus-file syllabus.txt
 ```
 
-**With question bank (uses RAG):**
+**2. Analyze Exam Papers (New!)**
 ```bash
-python cli.py create-subject "Machine Learning" \
-  --syllabus-file syllabus.txt \
-  --question-bank @questions.pdf
+# Define your exam pattern first
+python cli.py configure-exam "UnivPattern2024"
+
+# Ingest a PDF paper
+python cli.py ingest-paper "Nov2023.pdf" --pattern "UnivPattern2024" --year "2023"
+
+# Generate Solutions
+python cli.py get-pyq-answers
 ```
 
-**Interactive mode:**
+**3. Visual Learning**
 ```bash
-python cli.py create-subject "Machine Learning"
-# Then paste syllabus text and press Ctrl+D
+# Generate Mindmaps for all topics
+python cli.py generate-mindmap-v2
 ```
-
-**Managing subjects:**
-```bash
-# List all subjects
-python cli.py list-subjects
-
-# Select a subject to work with
-python cli.py select-subject "Machine Learning"
-```
-
-#### Python CLI Commands
-
-**Available commands (run directly or in interactive mode):**
-
-```bash
-# System initialization
-python cli.py init                    # Initialize knowledge base
-
-# Subject management
-python cli.py list-subjects           # List all subjects
-python cli.py select-subject "ML"     # Select active subject
-python cli.py delete-subject "ML"     # Delete a subject
-
-# Topic management  
-python cli.py add-topic "Topic Name" --summary "..." --key-points "A,B,C"
-python cli.py list-topics             # List topics
-
-# Question management
-python cli.py add-question "Topic" "Question?" "Answer" --difficulty easy
-python cli.py list-questions          # List all questions
-
-# Learning aids
-python cli.py generate-mindmap        # Generate mind map
-python cli.py create-animation tcp    # Create animation (tcp/stack)
-python cli.py show-difference --example tcp_vs_udp
-python cli.py create-mnemonic "Topic" "Key,Points"
-
-# Syllabus operations
-python cli.py load-syllabus file.json # Import syllabus
-python cli.py export-syllabus         # Export current syllabus
-
-# Configuration
-python cli.py set-api-key YOUR_KEY    # Set Gemini API key
-```
-
-**Pro tip:** Use `python cli.py COMMAND --help` for detailed help on any command.
-
-#### React Terminal CLI (Optional)
-
-For a browser-based terminal experience:
-```bash
-cd frontend
-npm run dev
-# Open http://localhost:3000
-```
-
-See [FEATURES.md](FEATURES.md) for available React CLI commands.
 
 #### Streamlit Web UI
 
@@ -174,7 +107,11 @@ Start the Streamlit interface:
 streamlit run streamlit/app.py
 ```
 
-Navigate to `http://localhost:8501` to access the web interface.
+Navigate to `http://localhost:8501` to:
+- Browse structured topics and generated notes.
+- **Generate Animations** dynamically for any topic.
+- Edit subject schemas directly in the **Settings** page.
+- Review **Previous Year Questions** and solutions alongside your notes.
 
 ## 📖 Core Concepts
 
@@ -183,106 +120,40 @@ Navigate to `http://localhost:8501` to access the web interface.
 The system uses structured data models:
 
 ```python
-from core import Topic, Question, Syllabus
+from core import Topic, ExamPattern
 
 topic = Topic(
     name="TCP/IP Protocol",
     summary="Reliable network communication protocol",
     key_points=["Connection-oriented", "Three-way handshake"],
-    mnemonics=["SYN-ACK-ACK"]
+    mermaid_diagrams=[{"type": "sequence", "script": "..."}]
 )
 ```
 
-### Mind Map Generation
+### Animation Generation
 
-Create visual concept maps:
-
-```python
-from visual import MindMapGenerator
-
-generator = MindMapGenerator()
-generator.add_topics_from_syllabus(topics)
-generator.export_to_json("mindmap.json")
-```
-
-### Animations
-
-Generate educational animations:
+Create educational animations from text descriptions:
 
 ```python
-from visual import create_tcp_handshake_animation
-
-create_tcp_handshake_animation("output.mp4")
+# In Streamlit UI: Click "Generate Animation"
+# Backend: Gemini -> AnimationScript -> OpenCV -> GIF
 ```
-
-## 🎯 Learning Techniques
-
-1. **Spaced Repetition**: Built-in quiz system for retrieval practice
-2. **Visual Learning**: Mind maps and animations
-3. **Mnemonic Devices**: Acronyms and memory aids
-4. **Comparative Learning**: Difference tables for contrasting concepts
-5. **Structured Knowledge**: Organized hierarchical content
 
 ## 📚 Documentation
 
 - **[docs/QUICKSTART.md](docs/QUICKSTART.md)** - Get started in 5 minutes
 - **[docs/FEATURES.md](docs/FEATURES.md)** - Complete feature list and examples
+- **[docs/WORKFLOW_AND_DATA.md](docs/WORKFLOW_AND_DATA.md)** - Detailed data flow and formats
 - **[docs/INTEGRATION_GUIDE.md](docs/INTEGRATION_GUIDE.md)** - Add Gemini/RAG integration
-- **[docs/TODO.md](docs/TODO.md)** - Planned enhancements and roadmap
 
 ## 🔮 Recent Updates
 
-**v1.1 - CLI Fixes (Latest)**
-- ✅ Fixed interactive mode command execution
-- ✅ Added proper error handling for invalid commands
-- ✅ Improved command parsing with quoted string support
-- ✅ Fixed global variable initialization issues
-- ✅ Enhanced user experience with better prompts
-
-## 🛠️ Technologies
-
-**Backend:**
-- Python 3.8+
-- Pydantic (data validation)
-- NetworkX (graph visualization)
-- OpenCV (animations)
-- SQLite (storage)
-- Typer (CLI)
-- Streamlit (web UI)
-
-**Frontend:**
-- React 18
-- Vite (build tool)
-- Custom terminal component
-
-## 📝 Example Syllabus Format
-
-```json
-{
-  "title": "My Course",
-  "description": "Course description",
-  "topics": [
-    {
-      "name": "Topic Name",
-      "summary": "Brief summary",
-      "key_points": ["Point 1", "Point 2"],
-      "mnemonics": ["Memory aid"],
-      "questions": ["Question 1?"],
-      "subtopics": ["Subtopic 1"],
-      "prerequisites": ["Prereq 1"]
-    }
-  ]
-}
-```
-
-## 🤝 Contributing
-
-Contributions are welcome! This is a foundational implementation designed to leave room for innovation.
+**v2.0 - Major Feature Release**
+- ✅ **Exam Analysis Pipeline**: Ingest PDF papers, map questions to modules, and auto-generate answers.
+- ✅ **Dynamic Animations**: AI-driven generation of educational GIFs.
+- ✅ **Schema Editing**: Direct JSON manipulation of syllabi via Streamlit.
+- ✅ **Video Learning**: Deep integration of YouTube content into topic notes (Mindmaps + Summaries).
 
 ## 📄 License
 
 MIT License
-
-## 🙏 Acknowledgments
-
-Built with cognitive science principles and modern AI techniques to enhance learning effectiveness.
