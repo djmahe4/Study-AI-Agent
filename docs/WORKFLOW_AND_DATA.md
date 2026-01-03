@@ -22,17 +22,32 @@ The system is designed to transform raw educational content into structured, int
     - `data/subjects/<name>/notes/`: Directory structure with Markdown notes.
     - **Knowledge Base:** Topics are saved to SQLite for querying.
 
-### 3. Content Prioritization (Input)
-**Command:** `ingest-paper <file> --year <year>`
-- **Input:** Past year question paper (PDF/Image).
-- **Processing (Stub):**
-    - (Planned) OCR + RAG to map questions to specific Topics.
-    - Updates `importance_score` in the Topic model.
-- **Goal:** Identify high-yield topics for focused study.
+### 3. Refinement
+**Interface:** Streamlit Web UI -> Settings Page
+- **Action:** Select a subject and directly edit the `syllabus.json` schema.
+- **Goal:** Correct AI hallucinations, add missing topics, or reorder modules manually.
 
-### 4. Study Phase (Output)
-**Command:** `save-notes`
-- Generates a clean Markdown hierarchy for reading.
+### 4. Exam Pattern Configuration (New!)
+**Command:** `configure-exam <PatternName>`
+- **Input:** Interactive wizard.
+    - Define Sections (e.g., "Part A", "Part B") with mark weightage.
+    - Define Module Mapping (e.g., "Module 1 covers Questions 1, 2, 11").
+- **Output:** `data/exam_patterns/<PatternName>.json`
+- **Goal:** Define the structure of question papers for accurate analysis.
+
+### 5. Content Prioritization & Question Bank (Input)
+**Command:** `ingest-paper <file> --pattern <PatternName> --year <Year>`
+- **Input:** Past year question paper (PDF).
+- **Processing:**
+    - `PyMuPDF` extracts text.
+    - `QuestionPaperAnalyzer` (Gemini Flash) extracts structured questions (Part A/B, Marks, etc.).
+    - Maps questions to Modules based on the defined Pattern.
+- **Output:** `data/subjects/<name>/questions/question_bank.json`
+
+### 6. Study Phase (Output)
+**Command:** `save-notes` / `get-pyq-answers`
+- `save-notes`: Generates a clean Markdown hierarchy for reading.
+- `get-pyq-answers`: Generates detailed solutions for ingested PYQs and appends them to module notes.
 - **Structure:**
     ```text
     notes/
@@ -40,26 +55,29 @@ The system is designed to transform raw educational content into structured, int
     ├── Module 1 - Name/
     │   ├── README.md          # Module Overview & Topic Index
     │   ├── 1. Topic A.md      # Detailed Notes, Mnemonics, Diagrams
-    │   └── 2. Topic B.md
+    │   ├── 1. Topic A_mermaid.md # Embedded Mindmap
+    │   ├── 1. Topic A_anim.gif   # Embedded Animation
+    │   └── PYQ_Solutions.md   # Generated Exam Solutions
     ```
 
-### 5. Deepening Knowledge (RAG & Interactive)
-**Command:** `ask-youtube <url> "<question>"` / `quiz-youtube <url>`
+### 7. Deepening Knowledge (RAG & Interactive)
+**Command:** `ask-youtube <url> --topic <topic>`
 - **Input:** YouTube URL.
 - **Processing:**
     - `DrissionPage` fetches subtitles.
-    - RAG Engine (LangChain + Gemini) indexes the transcript.
+    - RAG Engine indexes the transcript and generates structured notes.
 - **Output:**
-    - Answers to specific questions based *only* on the video.
-    - Generated MCQs saved to the Question Bank.
+    - Appends video summary and insights to the topic's Markdown note.
+    - Generates a Mermaid mindmap for the video content.
 
-### 6. Visualization
-**Command:** `generate-mindmap-v2` / `create-animation`
+### 8. Visualization
+**Interface:** Streamlit Topics Page / CLI `generate-mindmap-v2`
 - **Mind Map:**
-    - Reads Topics from Knowledge Base.
-    - Generates `mindmap.mmd` (Mermaid.js format).
+    - Generates and embeds Mermaid.js diagrams into topic notes.
 - **Animations:**
-    - Generates procedural animations (e.g., TCP Handshake) using OpenCV.
+    - Click "Generate Animation" in Streamlit.
+    - AI creates a script -> OpenCV renders a GIF.
+    - The GIF is saved to the notes folder and embedded in the UI.
 
 ---
 
@@ -95,26 +113,57 @@ The core source of truth for a subject.
 }
 ```
 
-### 2. Topic Model (Internal/DB)
-Used for RAG context and individual processing.
+### 2. Exam Pattern JSON (`exam_patterns/University2024.json`)
+Defines the structure for parsing papers.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `name` | String | Topic title |
-| `module_id` | UUID | Parent module reference |
-| `summary` | String | AI-generated summary |
-| `key_points` | List[Str] | Bullet points for quick review |
-| `mnemonics` | List[Str] | Memory aids (e.g., "All People Seem To Need Data Processing") |
-| `questions` | List[Str] | Practice questions associated with this topic |
-| `importance` | Float | 0.0-1.0 score based on exam frequency |
+```json
+{
+  "name": "University2024",
+  "sections": [
+    { "name": "Part A", "question_range": [1, 10], "marks_per_question": 2, "has_choice": false },
+    { "name": "Part B", "question_range": [11, 15], "marks_per_question": 13, "has_choice": true }
+  ],
+  "module_mapping": {
+    "Module 1": [1, 2, 11],
+    "Module 2": [3, 4, 12]
+  }
+}
+```
 
-### 3. Question Bank (SQLite)
-Stores generated or manual questions.
+### 3. Analyzed Question (`questions/question_bank.json`)
+Extracted question data.
 
-| Field | Type | Description |
-|-------|------|-------------|
-| `topic` | String | Associated topic or "YouTube: <URL>" |
-| `question` | String | The question text |
-| `answer` | String | Correct answer/explanation |
-| `type` | String | `multiple_choice` or `open_ended` |
-| `options` | List[Str] | Choices for MCQs |
+```json
+[
+  {
+    "id": "uuid...",
+    "number": 1,
+    "part": "a",
+    "text": "Define OSI Model.",
+    "marks": 2,
+    "module": "Module 1",
+    "year": "2023",
+    "paper_name": "Nov_2023.pdf"
+  }
+]
+```
+
+### 4. Animation Script (Internal)
+Used for generating procedural animations.
+
+```json
+{
+  "title": "TCP Handshake",
+  "topic": "Transmission Control Protocol",
+  "fps": 30,
+  "frames": [
+    {
+      "duration_frames": 30,
+      "commands": [
+         { "type": "circle", "center": [100, 100], "radius": 50, "color": [255, 0, 0] },
+         { "type": "text", "text": "SYN", "position": [120, 120] }
+      ]
+    }
+  ]
+}
+```

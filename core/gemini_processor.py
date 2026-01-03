@@ -5,11 +5,13 @@ import json
 import os
 import hashlib
 import logging
+logging.basicConfig(filename='gemini_processor.log', level=logging.INFO)
 from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from .models import Syllabus, Topic
 from google import genai
 from google.genai import types
+import google.genai
 from pydantic import BaseModel as PydanticModel
 
 # Configure logging
@@ -62,13 +64,13 @@ class GeminiProcessor:
     Uses the new google-genai SDK.
     """
     
-    def __init__(self, client: Optional[genai.Client] = None, model_name: str = "gemini-2.0-flash-exp"):
+    def __init__(self, client: Optional[genai.Client] = None, model_name: str = "gemini-2.5-flash"):
         """
         Initialize GeminiProcessor with a Gemini client.
         
         Args:
             client: An initialized google.genai.Client. If None, one will be created.
-            model_name: The model to use (default: gemini-2.0-flash-exp).
+            model_name: The model to use (default: gemini-2.5-flash).
         """
         if client:
             self.client = client
@@ -95,23 +97,32 @@ class GeminiProcessor:
     
     def _create_extraction_prompt(self, syllabus_text: str, subject_name: str) -> str:
         """
-        Create a prompt for Gemini to extract structured syllabus data.
+        Create a prompt for Gemini to extract structured syllabus data with modules.
         """
         return f"""
 Extract structured learning content from the following syllabus text for the subject "{subject_name}".
+Organize the content into logically defined Modules (or Units) as they appear in the syllabus.
 
 Syllabus Text:
 {syllabus_text}
 
 Return the result as a valid JSON object matching the following structure:
 {{
-  "title": "Subject Title",
+  "title": "{subject_name}",
   "description": "Subject Description",
-  "topics": [
+  "modules": [
     {{
-      "name": "Topic Name",
-      "summary": "Brief summary",
-      "key_points": ["Point 1", "Point 2"]
+      "name": "Module 1: Name",
+      "description": "Module overview",
+      "order": 1,
+      "topics": [
+        {{
+          "name": "Topic Name",
+          "summary": "Brief summary",
+          "key_points": ["Point 1", "Point 2"],
+          "subtopics": ["Subtopic 1", "Subtopic 2"]
+        }}
+      ]
     }}
   ]
 }}
@@ -129,12 +140,12 @@ Return the result as a valid JSON object matching the following structure:
         else:
             # 2. Call API
             try:
-                # Using the new SDK's generate_content
+                # Using the new SDK's generate_content method
                 response = self.client.models.generate_content(
                     model=self.model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
+                        #response_mime_type="application/json",
                         tools=[types.Tool(google_search=types.GoogleSearch())],
                         )
                 )
@@ -169,8 +180,8 @@ Return the result as a valid JSON object matching the following structure:
                 with open(f"{schema_cls.__name__}.json", "w", encoding="utf-8") as f:
                     json.dump(parsed_obj.model_dump(), f, indent=2, ensure_ascii=False)
             except Exception as e:
-                 logger.warning(f"Could not save debug JSON: {e}")
-
+                logger.warning(f"Could not save debug JSON: {e}")
+                print(parsed_obj)
             return parsed_obj
             
         except Exception as e:

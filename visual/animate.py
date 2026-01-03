@@ -73,10 +73,73 @@ class Animator:
                 out.write(frame)
         finally:
             out.release()
+            
+    def save_gif(self, output_path: str) -> None:
+        """
+        Save animation as GIF using PIL.
+        """
+        if not self.frames:
+            raise ValueError("No frames to save")
+            
+        Path(output_path).parent.mkdir(parents=True, exist_ok=True)
+        
+        # Convert BGR (OpenCV) to RGB (PIL)
+        from PIL import Image
+        pil_frames = [Image.fromarray(cv2.cvtColor(f, cv2.COLOR_BGR2RGB)) for f in self.frames]
+        
+        # Save
+        pil_frames[0].save(
+            output_path,
+            save_all=True,
+            append_images=pil_frames[1:],
+            duration=1000/self.fps,
+            loop=0
+        )
     
     def clear_frames(self) -> None:
         """Clear all frames."""
         self.frames = []
+
+def render_animation_from_script(script: 'AnimationScript', output_path: str) -> str:
+    """
+    Render an animation from an AnimationScript model.
+    """
+    # Import here to avoid circular imports if models imports this file (it shouldn't, but safety first)
+    from core.models import AnimationCommandType
+    
+    animator = Animator(width=script.width, height=script.height, fps=script.fps)
+    
+    for frame_data in script.frames:
+        canvas = animator.create_blank_frame()
+        
+        for cmd in frame_data.commands:
+            # Convert RGB list to BGR tuple
+            color = tuple(cmd.color[::-1]) if cmd.color else (0, 0, 0)
+            
+            if cmd.type == AnimationCommandType.TEXT:
+                if cmd.text and cmd.position:
+                    canvas = animator.add_text(canvas, cmd.text, tuple(cmd.position), cmd.font_scale, color, cmd.thickness)
+            
+            elif cmd.type == AnimationCommandType.CIRCLE:
+                if cmd.center and cmd.radius:
+                    canvas = animator.add_circle(canvas, tuple(cmd.center), cmd.radius, color, cmd.thickness)
+            
+            elif cmd.type == AnimationCommandType.RECTANGLE:
+                if cmd.start_point and cmd.end_point:
+                    canvas = animator.add_rectangle(canvas, tuple(cmd.start_point), tuple(cmd.end_point), color, cmd.thickness)
+                    
+            elif cmd.type == AnimationCommandType.ARROW:
+                if cmd.start_point and cmd.end_point:
+                    canvas = animator.add_arrow(canvas, tuple(cmd.start_point), tuple(cmd.end_point), color, cmd.thickness)
+
+        animator.add_frame(canvas, duration_frames=frame_data.duration_frames)
+
+    if output_path.lower().endswith('.gif'):
+        animator.save_gif(output_path)
+    else:
+        animator.save_video(output_path)
+        
+    return output_path
 
 
 def create_tcp_handshake_animation(output_path: str = "data/animations/tcp_handshake.mp4") -> str:
