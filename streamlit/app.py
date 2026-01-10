@@ -8,46 +8,75 @@ from pathlib import Path
 # Add parent directory to path
 sys.path.insert(0, str(Path(__file__).parent.parent))
 
-from core import KnowledgeBase, Topic, Question, create_acronym_mnemonic, get_example_difference
+from core import KnowledgeBase, Topic, Question, create_acronym_mnemonic, get_example_difference, get_subject_dir, load_syllabus_from_json
 from visual import MindMapGenerator
+from viz_utils import plot_questions_per_module, plot_marks_distribution, analyze_repeated_questions
 import json
 
-
-# Page configuration
-st.set_page_config(
-    page_title="AI Learning Engine",
-    page_icon="🧠",
-    layout="wide",
-    initial_sidebar_state="expanded"
-)
-
-
-# Initialize session state
-if 'kb' not in st.session_state:
-    st.session_state.kb = KnowledgeBase()
-if 'current_topic' not in st.session_state:
-    st.session_state.current_topic = None
-if 'quiz_mode' not in st.session_state:
-    st.session_state.quiz_mode = False
-if 'current_question_idx' not in st.session_state:
-    st.session_state.current_question_idx = 0
-
-
 def main():
+    # Page configuration
+    st.set_page_config(
+        page_title="AI Learning Engine",
+        page_icon="🧠",
+        layout="wide",
+        initial_sidebar_state="expanded"
+    )
+
+    # Initialize session state
+    if 'kb' not in st.session_state:
+        st.session_state.kb = KnowledgeBase()
+    if 'current_topic' not in st.session_state:
+        st.session_state.current_topic = None
+    if 'quiz_mode' not in st.session_state:
+        st.session_state.quiz_mode = False
+    if 'current_question_idx' not in st.session_state:
+        st.session_state.current_question_idx = 0
+
     st.title("🧠 AI Learning Engine")
+
     st.markdown("*Learn with mind maps, animations, and structured knowledge*")
     
     # Sidebar navigation
     st.sidebar.title("Navigation")
+    
+    # Global Subject Selector
+    subjects_path = Path("data/subjects/subjects.json")
+    if subjects_path.exists():
+        with open(subjects_path, "r") as f:
+            subjects_data = json.load(f)
+        subject_names = [s["name"] for s in subjects_data]
+        
+        # Get current subject to set default index
+        current_sub = get_current_subject()
+        default_idx = 0
+        if current_sub and current_sub in subject_names:
+            default_idx = subject_names.index(current_sub)
+            
+        selected_subject = st.sidebar.selectbox(
+            "📘 Current Subject", 
+            subject_names, 
+            index=default_idx
+        )
+        
+        # Update current subject file if changed
+        if selected_subject != current_sub:
+            with open("data/.current_subject", "w") as f:
+                f.write(selected_subject)
+            st.rerun()
+    else:
+        st.sidebar.warning("No subjects found. Use CLI to create one.")
+
     page = st.sidebar.radio(
         "Choose a page:",
-        ["📚 Topics", "🗺️ Mind Map", "❓ Quiz Mode", "📊 Differences", "🎬 Animations", "➕ Add Content"]
+        ["📚 Topics", "🗺️ Mind Map", "📝 Question Bank", "❓ Quiz Mode", "📊 Differences", "🎬 Animations", "➕ Add Content", "⚙️ Settings"]
     )
     
     if page == "📚 Topics":
         show_topics_page()
     elif page == "🗺️ Mind Map":
         show_mindmap_page()
+    elif page == "📝 Question Bank":
+        show_question_bank_page()
     elif page == "❓ Quiz Mode":
         show_quiz_page()
     elif page == "📊 Differences":
@@ -56,41 +85,418 @@ def main():
         show_animations_page()
     elif page == "➕ Add Content":
         show_add_content_page()
+    elif page == "⚙️ Settings":
+        show_settings_page()
 
+
+def get_current_subject():
+    try:
+        if Path("data/.current_subject").exists():
+            with open("data/.current_subject", "r") as f:
+                return f.read().strip()
+    except:
+        pass
+    return None
+
+def get_mermaid_content(topic_name):
+    """Finds the mermaid markdown file for a topic."""
+    subject = get_current_subject()
+    if not subject:
+        return None
+        
+    safe_name = "".join([c for c in topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+    search_pattern = f"*{safe_name}_mermaid.md"
+    
+    subject_dir = get_subject_dir(subject) / "notes"
+    if not subject_dir.exists():
+        return None
+        
+    found = list(subject_dir.rglob(search_pattern))
+    if found:
+        try:
+            with open(found[0], "r", encoding="utf-8") as f:
+                return f.read()
+        except:
+            return None
+    return None
+
+def get_animation_content(topic_name):
+    """Finds the animation GIF/Video for a topic."""
+    subject = get_current_subject()
+    if not subject:
+        return None
+        
+    safe_name = "".join([c for c in topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+    search_pattern = f"*{safe_name}_anim.gif" # Prefer GIF
+    
+    subject_dir = get_subject_dir(subject) / "notes"
+    if not subject_dir.exists():
+        return None
+        
+    found = list(subject_dir.rglob(search_pattern))
+    if found:
+        return str(found[0])
+        
+    # Check for mp4
+    search_pattern = f"*{safe_name}_anim.mp4"
+    found = list(subject_dir.rglob(search_pattern))
+    if found:
+        return str(found[0])
+        
+    return None
+
+def generate_topic_animation(topic_name, summary):
+    """Generates an animation script using Gemini and renders it."""
+    try:
+        from langchain_google_genai import ChatGoogleGenerativeAI
+        from core.models import AnimationScript
+        from visual.animate import render_animation_from_script
+        import os
+        from dotenv import load_dotenv
+        
+        load_dotenv()
+        if not os.getenv("GOOGLE_API_KEY"):
+            st.error("GOOGLE_API_KEY not found in environment.")
+            return None
+
+        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+        structured_llm = llm.with_structured_output(AnimationScript)
+        
+        with st.spinner(f"Planning animation for '{topic_name}'..."):
+            prompt = f"""
+            Create an educational animation script for the topic: "{topic_name}".
+            Summary: {summary}
+            
+            The animation should visualize the concept clearly using simple shapes (circles, rectangles, arrows, text).
+            Plan a sequence of frames that build up the concept step-by-step.
+            Duration should be reasonable (e.g. 5-10 seconds total).
+            """
+            script = structured_llm.invoke(prompt)
+        
+        if not script:
+            st.error("Failed to generate animation script.")
+            return None
+            
+        # Determine output path
+        subject = get_current_subject()
+        safe_name = "".join([c for c in topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+        
+        # We need to find the topic directory. Heuristic: look for existing note or mermaid file
+        subject_dir = get_subject_dir(subject) / "notes"
+        # Try to find where the topic note is
+        found_notes = list(subject_dir.rglob(f"*{safe_name}.md"))
+        
+        if found_notes:
+            output_dir = found_notes[0].parent
+        else:
+            output_dir = subject_dir # Fallback
+            
+        output_path = output_dir / f"{safe_name}_anim.gif"
+        
+        with st.spinner("Rendering animation frames..."):
+            render_animation_from_script(script, str(output_path))
+            
+        return str(output_path)
+
+    except Exception as e:
+        st.error(f"Animation generation failed: {e}")
+        return None
+
+def show_settings_page():
+    st.header("⚙️ Schema & Data Management")
+    
+    subjects_path = Path("data/subjects/subjects.json")
+    if not subjects_path.exists():
+        st.error("No subjects found.")
+        return
+        
+    with open(subjects_path, "r") as f:
+        subjects_data = json.load(f)
+        
+    subject_names = [s["name"] for s in subjects_data]
+    selected_subject_name = st.selectbox("Select Subject to Edit", subject_names)
+    
+    if selected_subject_name:
+        subject_info = next(s for s in subjects_data if s["name"] == selected_subject_name)
+        syllabus_path = Path(subject_info["syllabus_path"])
+        
+        if syllabus_path.exists():
+            with open(syllabus_path, "r", encoding="utf-8") as f:
+                try:
+                    syllabus = json.load(f)
+                except json.JSONDecodeError:
+                    st.error("Failed to load syllabus JSON.")
+                    return
+
+            st.subheader(f"Edit Syllabus: {selected_subject_name}")
+            
+            # --- General Info ---
+            with st.expander("Subject Details", expanded=True):
+                new_title = st.text_input("Title", syllabus.get("title", ""))
+                new_desc = st.text_area("Description", syllabus.get("description", ""))
+                
+                syllabus["title"] = new_title
+                syllabus["description"] = new_desc
+
+            # --- Modules ---
+            st.markdown("### Modules")
+            
+            # Helper to delete module
+            if "delete_module_idx" not in st.session_state:
+                st.session_state.delete_module_idx = None
+
+            modules = syllabus.get("modules", [])
+            
+            for i, module in enumerate(modules):
+                with st.expander(f"Module {i+1}: {module.get('name', 'Untitled')}"):
+                    # Module Edit Form
+                    col1, col2 = st.columns([3, 1])
+                    with col1:
+                        new_mod_name = st.text_input(f"Name (Mod {i+1})", module.get("name", ""), key=f"mod_name_{i}")
+                        module["name"] = new_mod_name
+                    with col2:
+                        if st.button("🗑️ Delete Module", key=f"del_mod_{i}"):
+                            st.session_state.delete_module_idx = i
+                            st.rerun()
+
+                    new_mod_desc = st.text_area(f"Description (Mod {i+1})", module.get("description", ""), key=f"mod_desc_{i}")
+                    module["description"] = new_mod_desc
+                    
+                    # Topics in Module
+                    st.markdown("#### Topics")
+                    topics = module.get("topics", [])
+                    
+                    # Helper to delete topic
+                    if f"delete_topic_{i}_idx" not in st.session_state:
+                        st.session_state[f"delete_topic_{i}_idx"] = None
+
+                    for j, topic in enumerate(topics):
+                        with st.container():
+                            c1, c2 = st.columns([4, 1])
+                            with c1:
+                                new_topic_name = st.text_input(f"Topic {j+1}", topic.get("name", ""), key=f"t_name_{i}_{j}")
+                                topic["name"] = new_topic_name
+                            with c2:
+                                if st.button("🗑️", key=f"del_t_{i}_{j}"):
+                                    st.session_state[f"delete_topic_{i}_idx"] = j
+                                    st.rerun()
+                            
+                            with st.expander("Topic Details"):
+                                new_t_summary = st.text_area("Summary", topic.get("summary", ""), key=f"t_sum_{i}_{j}")
+                                topic["summary"] = new_t_summary
+                                
+                                # Key Points (Comma separated for simplicity)
+                                current_kps = ", ".join(topic.get("key_points", []))
+                                new_kps = st.text_area("Key Points (comma separated)", current_kps, key=f"t_kp_{i}_{j}")
+                                topic["key_points"] = [k.strip() for k in new_kps.split(",") if k.strip()]
+
+                    # Handle Topic Deletion
+                    if st.session_state[f"delete_topic_{i}_idx"] is not None:
+                        del topics[st.session_state[f"delete_topic_{i}_idx"]]
+                        st.session_state[f"delete_topic_{i}_idx"] = None
+                        st.rerun()
+
+                    # Add Topic
+                    if st.button("➕ Add Topic", key=f"add_t_{i}"):
+                        topics.append({
+                            "name": "New Topic",
+                            "summary": "",
+                            "key_points": []
+                        })
+                        st.rerun()
+
+            # Handle Module Deletion
+            if st.session_state.delete_module_idx is not None:
+                del modules[st.session_state.delete_module_idx]
+                st.session_state.delete_module_idx = None
+                st.rerun()
+
+            # Add Module
+            if st.button("➕ Add New Module"):
+                modules.append({
+                    "name": "New Module",
+                    "description": "",
+                    "topics": []
+                })
+                st.rerun()
+
+            st.divider()
+            
+            # Save Changes
+            if st.button("💾 Save Changes", type="primary"):
+                try:
+                    with open(syllabus_path, "w", encoding="utf-8") as f:
+                        json.dump(syllabus, f, indent=2)
+                    st.success("Syllabus updated successfully!")
+                    # TODO: Trigger re-generation of markdown notes if needed? 
+                    # For now just saving JSON source of truth.
+                except Exception as e:
+                    st.error(f"Error saving file: {e}")
+
+def get_pyq_content(topic_name, module_id=None):
+    """Finds the PYQ Solutions markdown for the module containing this topic."""
+    subject = get_current_subject()
+    if not subject:
+        return None
+    
+    # Heuristic: We need to find the module folder.
+    # Since we don't have direct module link in flat topic list easily without loading syllabus again,
+    # let's try to find the topic file and look in its parent folder for PYQ_Solutions.md
+    
+    safe_name = "".join([c for c in topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+    search_pattern = f"*{safe_name}.md"
+    
+    subject_dir = get_subject_dir(subject) / "notes"
+    if not subject_dir.exists():
+        return None
+        
+    found_notes = list(subject_dir.rglob(search_pattern))
+    if found_notes:
+        # Check if PYQ_Solutions.md exists in the same directory (Module directory)
+        module_dir = found_notes[0].parent
+        pyq_file = module_dir / "PYQ_Solutions.md"
+        if pyq_file.exists():
+            try:
+                with open(pyq_file, "r", encoding="utf-8") as f:
+                    return f.read()
+            except:
+                return None
+    return None
+
+def show_question_bank_page():
+    st.header("📝 Question Bank Analysis")
+    
+    subject = get_current_subject()
+    if not subject:
+        st.warning("Please select a subject first.")
+        return
+
+    # Load analyzed questions
+    questions_data = st.session_state.kb.get_analyzed_questions(subject)
+    if not questions_data:
+        st.info("No analyzed questions found for this subject. Use 'ingest-paper' in CLI to add questions.")
+        return
+        
+    from core.models import AnalyzedQuestion
+    questions = [AnalyzedQuestion(**q) for q in questions_data]
+    
+    # 1. Overview Visualization
+    st.markdown("### 📊 Subject Overview")
+    plot_questions_per_module(questions)
+    plot_marks_distribution(questions)
+    
+    st.divider()
+    
+    # 2. Module Drill-down
+    st.markdown("### 🔍 Module Drill-down")
+    
+    # Get unique modules
+    modules = list(set([q.module for q in questions if q.module]))
+    modules.sort()
+    
+    selected_module = st.selectbox("Select Module to Analyze", ["All Modules"] + modules)
+    
+    filtered_questions = questions
+    if selected_module != "All Modules":
+        filtered_questions = [q for q in questions if q.module == selected_module]
+        
+    st.markdown(f"**Total Questions:** {len(filtered_questions)}")
+    
+    # 3. Repeated / Predictable Questions
+    analyze_repeated_questions(filtered_questions)
+    
+    # 4. Question List
+    with st.expander("📋 View All Questions"):
+        for q in filtered_questions:
+            st.markdown(f"**Q{q.number} ({q.year})** - {q.module}")
+            st.text(q.text)
+            st.caption(f"Marks: {q.marks}")
+            st.divider()
 
 def show_topics_page():
     st.header("📚 Learning Topics")
     
-    topics = st.session_state.kb.get_topics()
-    
-    if not topics:
-        st.warning("No topics found. Add some topics to get started!")
+    subject = get_current_subject()
+    if not subject:
+        st.warning("No subject selected.")
         return
+        
+    # Get Syllabus structure for hierarchy
+    subjects_file = "data/subjects/subjects.json"
+    if not Path(subjects_file).exists():
+        st.error("Subjects data missing.")
+        return
+        
+    with open(subjects_file, 'r') as f:
+        subjects_data = json.load(f)
+        
+    subject_info = next((s for s in subjects_data if s["name"] == subject), None)
+    if not subject_info:
+        st.error("Subject info not found.")
+        return
+        
+    syllabus_path = subject_info.get("syllabus_path")
+    if not syllabus_path or not Path(syllabus_path).exists():
+        st.error("Syllabus file missing.")
+        return
+        
+    syllabus = load_syllabus_from_json(syllabus_path)
     
-    # Display topics as cards
-    for topic in topics:
-        with st.expander(f"📖 {topic.name}"):
-            st.markdown(f"**Summary:** {topic.summary}")
-            
-            if topic.key_points:
-                st.markdown("**Key Points:**")
-                for point in topic.key_points:
-                    st.markdown(f"- {point}")
-            
-            if topic.mnemonics:
-                st.markdown("**Mnemonics:**")
-                for mnemonic in topic.mnemonics:
-                    st.info(mnemonic)
-            
-            if topic.subtopics:
-                st.markdown(f"**Subtopics:** {', '.join(topic.subtopics)}")
-            
-            # Generate mnemonic button
-            if topic.key_points and len(topic.key_points) > 0:
-                if st.button(f"Generate Mnemonic for {topic.name}", key=f"mnemonic_{topic.id}"):
-                    mnemonic = create_acronym_mnemonic(topic.name, topic.key_points)
-                    st.success(f"**{mnemonic.content}** - {mnemonic.explanation}")
+    # Iterate Modules
+    for module in syllabus.modules:
+        with st.expander(f"📦 {module.name}", expanded=False):
+            if module.description:
+                st.caption(module.description)
+                
+            # Iterate Topics in Module
+            for topic in module.topics:
+                # Create a card-like container for topic
+                st.markdown(f"### {topic.name}")
+                st.markdown(f"**Summary:** {topic.summary}")
+                
+                col1, col2 = st.columns([3, 1])
+                
+                with col1:
+                    if topic.key_points:
+                        st.markdown("**Key Points:**")
+                        for kp in topic.key_points:
+                            st.markdown(f"- {kp}")
+                                
+                    if topic.mnemonics:
+                         for m in topic.mnemonics:
+                            st.info(f"🧠 Mnemonic: {m}")
+                            
+                    # Show Mermaid Diagram
+                    mermaid_content = get_mermaid_content(topic.name)
+                    if mermaid_content:
+                        if st.button("Show Mind Map", key=f"mm_{topic.id}"):
+                            st.markdown(mermaid_content)
 
+                    # Show PYQ
+                    pyq_content = get_pyq_content(topic.name)
+                    if pyq_content:
+                        if st.button("Show Past Questions", key=f"pyq_{topic.id}"):
+                            st.markdown(pyq_content)
+                            
+                with col2:
+                    # Actions
+                    if topic.key_points:
+                        if st.button("🪄 Mnemonic", key=f"gen_mnem_{topic.id}"):
+                            mnemonic = create_acronym_mnemonic(topic.name, topic.key_points)
+                            st.success(f"**{mnemonic.content}**")
+                            
+                    anim_path = get_animation_content(topic.name)
+                    if anim_path:
+                        if anim_path.endswith('.gif'):
+                            st.image(anim_path)
+                        else:
+                            st.video(anim_path)
+                    else:
+                        if st.button("🎬 Animate", key=f"gen_anim_{topic.id}"):
+                            generate_topic_animation(topic.name, topic.summary)
+                            st.rerun()
+                
+                st.divider()
 
 def show_mindmap_page():
     st.header("🗺️ Mind Map Explorer")

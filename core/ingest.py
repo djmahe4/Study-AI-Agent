@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import List, Optional
 from .models import Topic, Syllabus, Question
+from .utils import get_subject_dir
 import uuid
 
 
@@ -120,6 +121,53 @@ class KnowledgeBase:
         conn.close()
         
         return [Question.model_validate_json(row[0]) for row in rows]
+    
+    def save_analyzed_questions(self, questions: List['AnalyzedQuestion'], subject_name: str) -> None:
+        """Save analyzed exam questions to a subject-specific JSON file using QuestionBank model."""
+        from .models import QuestionBank, AnalyzedQuestion
+        
+        path = get_subject_dir(subject_name) / "questions/question_bank.json"
+        path.parent.mkdir(parents=True, exist_ok=True)
+        
+        current_bank = QuestionBank(questions=[])
+        
+        if path.exists():
+            with open(path, "r", encoding="utf-8") as f:
+                try:
+                    data = json.load(f)
+                    if isinstance(data, list):
+                        # Migration: Convert old list format to QuestionBank
+                        # Ensure we validate/convert dicts to AnalyzedQuestion
+                        validated_qs = [AnalyzedQuestion(**q) for q in data]
+                        current_bank.questions = validated_qs
+                    elif isinstance(data, dict):
+                        current_bank = QuestionBank(**data)
+                except Exception as e:
+                    print(f"Error loading existing question bank: {e}")
+        
+        # Merge new questions
+        # Simple append. De-duplication could be added here based on ID or content.
+        current_bank.questions.extend(questions)
+        
+        with open(path, "w", encoding="utf-8") as f:
+            json.dump(current_bank.model_dump(), f, indent=2, default=str)
+
+    def get_analyzed_questions(self, subject_name: str) -> List[dict]:
+        """Retrieve analyzed questions for a subject."""
+        path = get_subject_dir(subject_name) / "questions/question_bank.json"
+        if not path.exists():
+            return []
+            
+        with open(path, "r", encoding="utf-8") as f:
+            try:
+                data = json.load(f)
+                if isinstance(data, list):
+                    return data
+                elif isinstance(data, dict):
+                    # It's likely a QuestionBank
+                    return data.get("questions", [])
+            except Exception:
+                return []
 
 
 def load_syllabus_from_json(file_path: str) -> Syllabus:
@@ -134,3 +182,80 @@ def save_syllabus_to_json(syllabus: Syllabus, file_path: str) -> None:
     Path(file_path).parent.mkdir(parents=True, exist_ok=True)
     with open(file_path, 'w',encoding='utf-8') as f:
         json.dump(syllabus.model_dump(), f, indent=2, default=str)
+
+
+def save_syllabus_to_markdown(syllabus: Syllabus, output_dir: str) -> None:
+    """
+    Save a syllabus to a Markdown file structure (Subject/Module/Topic.md).
+    """
+    base_dir = Path(output_dir)
+    base_dir.mkdir(parents=True, exist_ok=True)
+    
+    # Subject Index (Readme)
+    with open(base_dir / "README.md", 'w', encoding='utf-8') as f:
+        f.write(f"# {syllabus.title}\n\n")
+        if syllabus.description:
+            f.write(f"{syllabus.description}\n\n")
+        f.write("## Modules\n")
+        for m in syllabus.modules:
+            f.write(f"- [{m.name}]({m.name}/README.md)\n")
+
+    for i, module in enumerate(syllabus.modules, 1):
+        # Create Module Folder
+        safe_mod_name = module.name.replace(":", " -").replace("/", "-").strip()
+        mod_dir = base_dir / safe_mod_name
+        mod_dir.mkdir(parents=True, exist_ok=True)
+        
+        # Module Index
+        with open(mod_dir / "README.md", 'w', encoding='utf-8') as f:
+            f.write(f"# {module.name}\n\n")
+            if module.description:
+                f.write(f"{module.description}\n\n")
+            f.write("## Topics\n")
+            for t in module.topics:
+                safe_t_name = t.name.replace("/", "-").strip()
+                f.write(f"- [{t.name}]({i}.{safe_t_name}.md)\n")
+
+        # Topic Files
+        for j, topic in enumerate(module.topics, 1):
+            safe_topic_name = topic.name.replace("/", "-").strip()
+            # Ensure filename is valid
+            safe_topic_name = "".join([c for c in safe_topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+            topic_file = mod_dir / f"{j}. {safe_topic_name}.md"
+            
+            with open(topic_file, 'w', encoding='utf-8') as f:
+                f.write(f"# {topic.name}\n\n")
+                f.write(f"**Module:** {module.name}\n\n")
+                f.write(f"**Summary:** {topic.summary}\n\n")
+                
+                if topic.key_points:
+                    f.write("## Key Points\n")
+                    for kp in topic.key_points:
+                        f.write(f"- {kp}\n")
+                    f.write("\n")
+                
+                if topic.mnemonics:
+                    f.write("## Mnemonics\n")
+                    for m in topic.mnemonics:
+                        f.write(f"- **{m}**\n")
+                    f.write("\n")
+                
+                if topic.mermaid_diagrams:
+                    f.write("## Visualizations\n")
+                    for diag in topic.mermaid_diagrams:
+                        # Handle both dictionary (legacy) and MermaidDiagram object
+                        if isinstance(diag, dict):
+                            title = diag.get('title') or diag.get('type', 'Diagram').capitalize()
+                            script = diag.get('script')
+                        else:
+                            title = diag.title or diag.type.capitalize()
+                            script = diag.script
+                            
+                        f.write(f"### {title}\n")
+                        f.write(f"```mermaid\n{script}\n```\n\n")
+                
+                if topic.questions:
+                    f.write("## Practice Questions\n")
+                    for q in topic.questions:
+                        f.write(f"- {q}\n")
+                    f.write("\n")
