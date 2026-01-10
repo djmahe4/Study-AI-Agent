@@ -33,11 +33,11 @@ class Topic(BaseModel):
     name: str = Field(..., description="Name of the topic")
     module_id: Optional[str] = None
     summary: str = Field(..., description="Brief summary of the topic")
-    key_points: List[str] = Field(default_factory=list, description="Key points to remember")
+    key_points: List[str] = Field(default_factory=list, description="Basic points to remember for exams")
     differences: List[str] = Field(default_factory=list, description="Key differences or contrasts")
     mnemonics: List[str] = Field(default_factory=list, description="Memory aids and mnemonics")
     questions: List[str] = Field(default_factory=list, description="Practice questions")
-    subtopics: List[str] = Field(default_factory=list, description="Related subtopics")
+    subtopics: List[str] = Field(default_factory=list, description="All subtopics")
     prerequisites: List[str] = Field(default_factory=list, description="Prerequisites for this topic")
     importance_score: float = Field(default=0.0, description="Calculated importance based on question papers")
     mermaid_diagrams: List[MermaidDiagram] = Field(default_factory=list, description="List of mermaid diagram objects")

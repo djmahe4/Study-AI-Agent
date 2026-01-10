@@ -11,7 +11,7 @@ from langchain_google_genai import ChatGoogleGenerativeAI
 from pydantic import BaseModel, Field
 from google.genai import types
 from icecream import ic
-ic.enable()
+ic.disable()
 from core.models import ExamPattern, AnalyzedQuestion, QuestionBank
 
 # Configure logging

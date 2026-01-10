@@ -70,14 +70,18 @@ The system is designed to transform raw educational content into structured, int
     - Appends video summary and insights to the topic's Markdown note.
     - Generates a Mermaid mindmap for the video content.
 
-### 8. Visualization
-**Interface:** Streamlit Topics Page / CLI `generate-mindmap-v2`
-- **Mind Map:**
-    - Generates and embeds Mermaid.js diagrams into topic notes.
-- **Animations:**
-    - Click "Generate Animation" in Streamlit.
-    - AI creates a script -> OpenCV renders a GIF.
-    - The GIF is saved to the notes folder and embedded in the UI.
+## 4. Visualizing & Learning (Web UI)
+Run `python cli.py run-web` to launch the dashboard.
+
+### **Features**
+1.  **Topics Page**: View content hierarchically (**Subject -> Module -> Topic**). Expand modules to see topics.
+2.  **Question Bank**: Analyze exam trends.
+    -   **Subject Overview**: Charts for Questions per Module and Marks Distribution.
+    -   **Module Drill-down**: Filter questions by module.
+    -   **Repeated Questions**: Identifies similar questions across years to help prioritize high-yield topics.
+3.  **Mind Maps**: Interactive view of topic relationships.
+4.  **Animations**: Generate and view concept animations.
+5.  **Quiz Mode**: Practice questions filtered by Subject/Module.
 
 ---
 

@@ -31,6 +31,8 @@ from langchain_classic.retrievers.document_compressors import LLMChainExtractor
 # from langchain.retrievers import ContextualCompressionRetriever
 # from langchain.retrievers.document_compressors import LLMChainExtractor
 
+from langchain_huggingface.embeddings import HuggingFaceEmbeddings
+
 from core.models import Topic, Question
 from visual.cli_viz import single_line_viz
 
@@ -170,7 +172,17 @@ def create_main_chain(fpath):
 
     # 2. Initialize Embeddings and Vector Store with Google Generative AI
     # Note: Requires google-generativeai to be installed or compatible shim
-    embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    try:
+        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
+    except Exception as e:
+        logger.warning(f"Google Generative AI Embeddings not available: {e}. Falling back to HuggingFace embeddings.")
+        # Choose one of the recommended models
+        embeddings = HuggingFaceEmbeddings(
+            model_name="BAAI/bge-small-en-v1.5"  # Or "sentence-transformers/all-mpnet-base-v2"
+            # Optional parameters:
+            # model_kwargs={"device": "cpu"},  # Use "cuda" if GPU is available for faster computation
+            # encode_kwargs={"normalize_embeddings": True}
+        )
     vector_store = FAISS.from_documents(chunks, embeddings)
     base_retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 

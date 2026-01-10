@@ -9,6 +9,7 @@ logging.basicConfig(filename='gemini_processor.log', level=logging.INFO)
 from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from .models import Syllabus, Topic
+from .utils import normalize_subject_name, get_subject_dir
 from google import genai
 from google.genai import types
 import google.genai
@@ -145,8 +146,8 @@ Return the result as a valid JSON object matching the following structure:
                     model=self.model_name,
                     contents=prompt,
                     config=types.GenerateContentConfig(
-                        #response_mime_type="application/json",
-                        tools=[types.Tool(google_search=types.GoogleSearch())],
+                        response_mime_type="application/json",
+                        #tools=[types.Tool(google_search=types.GoogleSearch())],
                         )
                 )
                 response_text = response.text
@@ -199,9 +200,7 @@ def create_subject_folder(subject_name: str, base_path: str = "data/subjects") -
     Returns:
         Path to the created subject folder
     """
-    # Sanitize subject name for folder
-    safe_name = subject_name.lower().replace(" ", "_").replace("/", "_")
-    subject_path = Path(base_path) / safe_name
+    subject_path = get_subject_dir(subject_name, base_path)
     
     # Create folder structure
     subject_path.mkdir(parents=True, exist_ok=True)

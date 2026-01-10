@@ -6,6 +6,7 @@ import sqlite3
 from pathlib import Path
 from typing import List, Optional
 from .models import Topic, Syllabus, Question
+from .utils import get_subject_dir
 import uuid
 
 
@@ -125,7 +126,7 @@ class KnowledgeBase:
         """Save analyzed exam questions to a subject-specific JSON file using QuestionBank model."""
         from .models import QuestionBank, AnalyzedQuestion
         
-        path = Path(f"data/subjects/{subject_name}/questions/question_bank.json")
+        path = get_subject_dir(subject_name) / "questions/question_bank.json"
         path.parent.mkdir(parents=True, exist_ok=True)
         
         current_bank = QuestionBank(questions=[])
@@ -153,7 +154,7 @@ class KnowledgeBase:
 
     def get_analyzed_questions(self, subject_name: str) -> List[dict]:
         """Retrieve analyzed questions for a subject."""
-        path = Path(f"data/subjects/{subject_name}/questions/question_bank.json")
+        path = get_subject_dir(subject_name) / "questions/question_bank.json"
         if not path.exists():
             return []
             

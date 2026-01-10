@@ -32,6 +32,7 @@ from core.rag import RAGEngine
 from core.exam_analysis import QuestionPaperAnalyzer
 from visual import create_simple_mindmap, create_tcp_handshake_animation, create_stack_animation
 from visual.mindmap_v2 import MindMapGenerator2
+from core.utils import get_subject_dir
 
 app = typer.Typer(help="AI Learning Engine CLI")
 console = Console()
@@ -161,6 +162,7 @@ def get_pyq_answers(
     Generate answers for ingested Previous Year Questions (PYQs).
     """
     current_subject = _get_current_subject()
+    subject_path= get_subject_dir(current_subject)
     if not current_subject:
         console.print("[red]No subject selected.[/red]")
         return
@@ -195,9 +197,14 @@ def get_pyq_answers(
     with open(subjects_file, 'r') as f:
         subjects = json.load(f)
     subject_data = next((s for s in subjects if s["name"] == current_subject), None)
-    base_dir = Path(subject_data['folder_path']) / "notes"
+    base_dir = subject_path / "notes"
+    map={}
+    with open(f"{subject_path}/syllabus/syllabus.json", 'r') as f:
+        syllabus = json.load(f)
+        for i, mod in enumerate(syllabus['modules']):
+            map[mod['name']]=list(grouped.values())[i] if i < len(list(grouped.values())) else []
 
-    for mod_name, qs in grouped.items():
+    for mod_name, qs in map.items():
         if not mod_name or mod_name == "Unknown": continue
         
         # Find module directory
@@ -420,8 +427,8 @@ def gemini_init():
 @app.command()
 def ask_youtube(
     url: str = typer.Argument(..., help="YouTube video URL"),
+    topic: Optional[str] = typer.Argument(None, help="Topic name to link this video to"),
     query: Optional[str] = typer.Argument(None, help="Question to ask (optional, triggers Q&A mode)"),
-    topic: Optional[str] = typer.Option(None, help="Topic name to link this video to"),
 ):
     """
     Analyze a YouTube video.

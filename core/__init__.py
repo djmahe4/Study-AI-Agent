@@ -5,6 +5,7 @@ from .models import Topic, Syllabus, Question, Mnemonic, DifferenceTable, Animat
 from .ingest import KnowledgeBase, load_syllabus_from_json, save_syllabus_to_json, save_syllabus_to_markdown
 from .mnemonics import create_acronym_mnemonic, create_difference_table, get_example_difference
 from .rag import RAGEngine
+from .utils import normalize_subject_name, get_subject_dir
 
 __all__ = [
     'Topic',
@@ -23,4 +24,6 @@ __all__ = [
     'create_difference_table',
     'get_example_difference',
     'RAGEngine',
+    'normalize_subject_name',
+    'get_subject_dir'
 ]
