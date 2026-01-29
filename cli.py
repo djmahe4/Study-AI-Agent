@@ -8,6 +8,7 @@ import typer
 import sys
 import platform
 import json
+import time
 import shlex
 from pathlib import Path
 from typing import Optional
@@ -188,35 +189,58 @@ def get_pyq_answers(
     analyzer = QuestionPaperAnalyzer(os.getenv("GOOGLE_API_KEY"))
     
     # Process
-    grouped = {}
-    for q in questions:
-        if q.module not in grouped: grouped[q.module] = []
-        grouped[q.module].append(q)
-        
-    subjects_file = "data/subjects/subjects.json"
-    with open(subjects_file, 'r') as f:
-        subjects = json.load(f)
-    subject_data = next((s for s in subjects if s["name"] == current_subject), None)
-    base_dir = subject_path / "notes"
-    map={}
+    # Load syllabus to get correct module names
     with open(f"{subject_path}/syllabus/syllabus.json", 'r') as f:
         syllabus = json.load(f)
-        for i, mod in enumerate(syllabus['modules']):
-            map[mod['name']]=list(grouped.values())[i] if i < len(list(grouped.values())) else []
+    
+    # Initialize map with syllabus modules
+    module_questions_map = {mod['name']: [] for mod in syllabus['modules']}
+    
+    # Assign questions to modules
+    for q in questions:
+        # 1. Try exact match
+        if q.module in module_questions_map:
+            module_questions_map[q.module].append(q)
+            continue
+            
+        # 2. Try fuzzy match (case insensitive)
+        found = False
+        for mod_name in module_questions_map.keys():
+            if mod_name.lower() == q.module.lower():
+                module_questions_map[mod_name].append(q)
+                found = True
+                break
+        if found: continue
 
-    for mod_name, qs in map.items():
-        if not mod_name or mod_name == "Unknown": continue
-        
-        # Find module directory
-        # Heuristic: Find dir that contains mod_name
-        # The folders are named "1. Module Name" or similar.
-        found_dir = None
-        for p in base_dir.iterdir():
-            if p.is_dir() and mod_name.lower() in p.name.lower():
-                found_dir = p
+        # 3. Fallback: Check if q.module is a substring or vice versa
+        for mod_name in module_questions_map.keys():
+            if mod_name.lower() in q.module.lower() or q.module.lower() in mod_name.lower():
+                module_questions_map[mod_name].append(q)
+                found = True
                 break
         
-        if not found_dir:
+        if not found:
+            console.print(f"[yellow]Warning: Could not map question (Mod: {q.module}) to any syllabus module.[/yellow]")
+
+    base_dir = subject_path / "notes"
+
+    for mod_name, qs in module_questions_map.items():
+        if not qs: continue
+        
+        # Find module directory
+        # 1. Precise lookup (matching save_syllabus_to_markdown logic)
+        safe_mod_name = mod_name.replace(":", " -").replace("/", "-").strip()
+        found_dir = base_dir / safe_mod_name
+        
+        # 2. Fallback: Fuzzy search
+        if not found_dir.exists():
+            found_dir = None
+            for p in base_dir.iterdir():
+                if p.is_dir() and mod_name.lower() in p.name.lower():
+                    found_dir = p
+                    break
+        
+        if not found_dir or not found_dir.exists():
             console.print(f"[yellow]Could not find folder for module '{mod_name}'[/yellow]")
             continue
             
@@ -228,13 +252,16 @@ def get_pyq_answers(
             f.write(f"\n# Previous Year Questions & Solutions\n")
             f.write(f"Generated on {os.getenv('DATE', 'Today')}\n\n")
             
-            for q in qs:
-                # Token Optimization: Check if answer roughly exists? No, just append.
-                ans = analyzer.generate_answer(q) # Context could be added here by reading topic notes
+            for i, q in enumerate(qs, 1):
+                console.print(f"  [dim]Generating Q{q.number}...[/dim]")
+                ans = analyzer.generate_answer(q) 
                 f.write(f"### Q{q.number} ({q.year}): {q.text}\n")
                 f.write(f"**Marks:** {q.marks}\n\n")
                 f.write(f"{ans}\n\n")
                 f.write("---\n")
+                
+                # Rate limit throttle: sleep 15s to respect 5 RPM
+                time.sleep(15)
                 
         console.print(f"[green]Saved solutions to {output_file}[/green]")
 

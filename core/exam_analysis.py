@@ -13,6 +13,8 @@ from google.genai import types
 from icecream import ic
 ic.disable()
 from core.models import ExamPattern, AnalyzedQuestion, QuestionBank
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log
+from google.api_core.exceptions import ResourceExhausted
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -193,6 +195,12 @@ class QuestionPaperAnalyzer:
 
         return mapped_qs
 
+    @retry(
+        retry=retry_if_exception_type(ResourceExhausted),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=15, min=30, max=120),
+        before_sleep=before_sleep_log(logger, logging.WARNING)
+    )
     def generate_answer(self, question: AnalyzedQuestion, context: str = "") -> str:
         """
         Generates an answer for a specific question, optionally using context.
@@ -209,8 +217,10 @@ class QuestionPaperAnalyzer:
         Provide a concise, point-wise answer suitable for an exam.
         """
         try:
-            response = self.llm.invoke(prompt, tools=[types.Tool(google_search=types.GoogleSearch())]
-                                       )
+            response = self.llm.invoke(prompt, tools=[types.Tool(google_search=types.GoogleSearch())])
             return response.content
-        except Exception:
-            return "Failed to generate answer."
+        except ResourceExhausted:
+            raise
+        except Exception as e:
+            logger.error(f"Error generating answer: {e}")
+            return f"Failed to generate answer: {e}"
