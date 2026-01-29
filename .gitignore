@@ -215,11 +215,11 @@ yarn-error.log*
 
 # Build outputs
 frontend/dist/
-data/memory.db
-data/animations/
-data/mindmap.json
-data/mindmap.dot
-data
+data/
+# data/memory.db
+# data/animations/
+# data/mindmap.json
+# data/mindmap.dot
 .idea
 
 # Gemini
