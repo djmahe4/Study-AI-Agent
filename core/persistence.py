@@ -51,13 +51,13 @@ class DataPersistenceManager:
             (success: bool, error_message: Optional[str])
         """
         file_path = Path(file_path)
+        backup_path = None
         
         try:
             # Step 1: Validate model (this will raise if invalid)
             model.model_validate(model.model_dump())
             
             # Step 2: Create backup of existing file
-            backup_path = None
             if create_backup and file_path.exists():
                 backup_path = self._create_backup(file_path)
             

@@ -28,6 +28,7 @@ Given the following topic notes, generate conceptual Mermaid diagrams that help 
 
 **Topic:** {topic_name}
 **Module:** {module_name}
+**Subject:** {subject_name}
 
 **Notes Content:**
 {markdown_content}
