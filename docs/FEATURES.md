@@ -16,18 +16,14 @@
 - **`quiz-youtube`**: Generate multiple-choice quizzes from educational videos and save them to your question bank.
 
 ## 🎨 Visualization
-- **Mermaid.js Mind Maps**: Generates embedded `.md` files with Mermaid syntax to visualize topic relationships.
-- **Dynamic Animations (New!)**: 
+- **Gemini-Powered Conceptual Diagrams (v2)**: Generates embedded `.md` files with complex relationship maps and mindmaps using AI-driven structural analysis.
+- **Dynamic Animations**: 
     - **Topic Animations**: Generate custom educational animations (GIF/Video) for any topic using AI-generated scripts and OpenCV rendering.
-    - **Integration**: Animations are automatically embedded into the Markdown notes and displayed in the Web UI.
-- **Difference Tables**: AI-generated comparison tables (e.g., TCP vs UDP).
+    - **Integration**: Animations are automatically embedded into the Markdown notes.
 
 ## 💻 Interfaces
-- **Interactive CLI**: Rich, color-coded terminal interface with autocomplete and workflow guidance.
-- **Streamlit Dashboard**: Web-based explorer for topics, quizzes, visualizations, and schema management.
-- **React Terminal**: (Experimental) Browser-based command line interface.
+- **Interactive CLI**: Rich terminal interface with autocomplete, intelligent module filtering, and progress tracking.
 
 ## 📝 Assessment
-- **Question Bank**: Stores generated questions.
-- **Quiz Mode**: Interactive CLI or Web-based quizzes.
-- **Paper Ingestion** (Beta): Infrastructure to ingest PDF question papers for topic prioritization.
+- **Intelligent Syllabus Enrichment**: `ingest-paper` now automatically maps questions from PDFs to your syllabus, updating topic importance scores and practice questions. It even creates new syllabus topics if a paper contains material not previously covered.
+- **Interactive PYQ Solutions**: `get-pyq-answers` allows you to preview questions in a rich table and selectively generate detailed answers for specific questions, saving time and API quota.

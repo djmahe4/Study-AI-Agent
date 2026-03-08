@@ -14,6 +14,9 @@ The brain of the application.
     - **Stack**: LangChain, Gemini 2.5 Flash.
 - **`ingest.py`**: Data persistence layer.
     - **Responsibility**: SQLite Knowledge Base (`data/memory.db`), JSON/Markdown I/O.
+- **`diagram_generator.py`**: Gemini-powered visual mapping engine.
+    - **Responsibility**: Generates complex conceptual diagrams and relationship maps using Gemini 2.5 Flash.
+    - **Stack**: LangChain (for prompt management and parsing).
 - **`models.py`**: Data Definitions.
     - **Stack**: Pydantic v2.
     - **Key Models**: `Subject`, `Module`, `Topic`, `Question`.

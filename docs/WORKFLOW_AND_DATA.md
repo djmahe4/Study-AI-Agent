@@ -35,53 +35,27 @@ The system is designed to transform raw educational content into structured, int
 - **Output:** `data/exam_patterns/<PatternName>.json`
 - **Goal:** Define the structure of question papers for accurate analysis.
 
-### 5. Content Prioritization & Question Bank (Input)
+### 5. Content Prioritization & Syllabus Enrichment
 **Command:** `ingest-paper <file> --pattern <PatternName> --year <Year>`
 - **Input:** Past year question paper (PDF).
 - **Processing:**
     - `PyMuPDF` extracts text.
-    - `QuestionPaperAnalyzer` (Gemini Flash) extracts structured questions (Part A/B, Marks, etc.).
-    - Maps questions to Modules based on the defined Pattern.
-- **Output:** `data/subjects/<name>/questions/question_bank.json`
+    - `QuestionPaperAnalyzer` (Gemini Flash) extracts structured questions.
+    - **Enrichment:** The system automatically maps questions back to the `syllabus.json`:
+        - Updates `importance_score` based on question frequency and marks.
+        - Appends question references to the `questions` array in the relevant Topic.
+        - Extract and adds missing `subtopics` found in questions.
+        - Creates **new Topics** if the question covers material not in the existing syllabus.
+- **Output:**
+    - `data/subjects/<name>/questions/question_bank.json`: Raw questions.
+    - **Updated** `syllabus.json`: Enriched with importance and references.
+    - **Updated** Markdown notes: Regenerated to include "Practice Questions" sections.
 
 ### 6. Study Phase (Output)
-**Command:** `save-notes` / `get-pyq-answers`
-- `save-notes`: Generates a clean Markdown hierarchy for reading.
-- `get-pyq-answers`: Generates detailed solutions for ingested PYQs and appends them to module notes.
-- **Structure:**
-    ```text
-    notes/
-    ├── README.md              # Subject Overview & Module Index
-    ├── Module 1 - Name/
-    │   ├── README.md          # Module Overview & Topic Index
-    │   ├── 1. Topic A.md      # Detailed Notes, Mnemonics, Diagrams
-    │   ├── 1. Topic A_mermaid.md # Embedded Mindmap
-    │   ├── 1. Topic A_anim.gif   # Embedded Animation
-    │   └── PYQ_Solutions.md   # Generated Exam Solutions
-    ```
-
-### 7. Deepening Knowledge (RAG & Interactive)
-**Command:** `ask-youtube <url> --topic <topic>`
-- **Input:** YouTube URL.
-- **Processing:**
-    - `DrissionPage` fetches subtitles.
-    - RAG Engine indexes the transcript and generates structured notes.
-- **Output:**
-    - Appends video summary and insights to the topic's Markdown note.
-    - Generates a Mermaid mindmap for the video content.
-
-## 4. Visualizing & Learning (Web UI)
-Run `python cli.py run-web` to launch the dashboard.
-
-### **Features**
-1.  **Topics Page**: View content hierarchically (**Subject -> Module -> Topic**). Expand modules to see topics.
-2.  **Question Bank**: Analyze exam trends.
-    -   **Subject Overview**: Charts for Questions per Module and Marks Distribution.
-    -   **Module Drill-down**: Filter questions by module.
-    -   **Repeated Questions**: Identifies similar questions across years to help prioritize high-yield topics.
-3.  **Mind Maps**: Interactive view of topic relationships.
-4.  **Animations**: Generate and view concept animations.
-5.  **Quiz Mode**: Practice questions filtered by Subject/Module.
+**Command:** `save-notes` / `get-pyq-answers` / `generate-mindmap-v2`
+- `save-notes`: Generates a clean Markdown hierarchy. Notes now include question references.
+- `generate-mindmap-v2`: Uses Gemini to generate conceptual diagrams and relationship maps.
+- `get-pyq-answers`: Generates detailed solutions for specific, user-selected PYQs.
 
 ---
 
@@ -93,22 +67,18 @@ The core source of truth for a subject.
 ```json
 {
   "title": "Computer Networks",
-  "description": "Study of network protocols...",
+  "description": "...",
   "modules": [
     {
-      "id": "uuid...",
-      "name": "Module 1: Introduction",
-      "order": 1,
+      "name": "Module 1",
       "topics": [
         {
-          "id": "uuid...",
           "name": "OSI Model",
           "summary": "7-layer architecture...",
-          "key_points": ["Layer 1: Physical", "Layer 7: Application"],
-          "module_id": "uuid...",
-          "importance_score": 0.0,
-          "mermaid_diagrams": [
-             { "type": "flowchart", "script": "graph TD; A-->B;" }
+          "importance_score": 0.85,
+          "subtopics": ["Physical Layer", "Data Link Layer"],
+          "questions": [
+            { "text": "Define OSI Model.", "year": "2023", "marks": 2 }
           ]
         }
       ]
