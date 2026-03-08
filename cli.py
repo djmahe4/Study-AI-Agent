@@ -28,6 +28,10 @@ from core import (
     save_syllabus_to_markdown
 )
 from core.models import ExamPattern, ExamSection, AnalyzedQuestion
+from core.pomodoro import PomodoroTimer
+from core.gamification import GamificationManager
+from core.todo_manager import TodoManager
+from core.flashcards import FlashcardManager
 from core.gemini_processor import GeminiProcessor, create_subject_folder
 from core.rag import RAGEngine
 from core.exam_analysis import QuestionPaperAnalyzer
@@ -37,6 +41,9 @@ from core.utils import get_subject_dir
 
 app = typer.Typer(help="AI Learning Engine CLI")
 console = Console()
+
+# Persistence Manager
+from core.persistence import get_persistence_manager
 
 # Global state for current subject
 CURRENT_SUBJECT_FILE = "data/.current_subject"
@@ -308,7 +315,10 @@ def help():
     table.add_row("📺 YouTube", "ask-youtube, quiz-youtube")
     table.add_row("🧠 Study", "add-question, list-questions, create-mnemonic, show-difference, ingest-paper, get-pyq-answers")
     table.add_row("🎨 Visuals", "generate-mindmap, generate-mindmap-v2, create-animation")
-    table.add_row("⚙️ System", "init, run-web, stop-web, set-api-key, exit")
+    table.add_row("🎮 Gamification", "pomodoro, progress")
+    table.add_row("✅ Tasks", "todo-add, todo-list, todo-complete")
+    table.add_row("🎴 Flashcards", "flashcard-create-deck, flashcard-add, flashcard-study")
+    table.add_row("⚙️ System", "backup-list, backup-restore, init, run-web, stop-web, set-api-key, exit")
 
     console.print(table)
     
@@ -959,38 +969,163 @@ def add_question(
 ):
     """Add a question to the knowledge base."""
     kb = KnowledgeBase()
+    current_subject = _get_current_subject()
     
+    # Try to resolve module from the syllabus if subject is selected
+    module_name = None
+    if current_subject:
+        resolved_module, _ = _find_topic_path(current_subject, topic)
+        module_name = resolved_module
+
     q = Question(
         topic=topic,
+        subject=current_subject,
+        module=module_name,
         question=question,
         answer=answer,
         difficulty=difficulty
     )
     
     kb.save_question(q)
-    console.print(f"[green]Question added for topic '{topic}'![/green]")
+    
+    msg = f"[green]Question added for topic '{topic}'"
+    if current_subject:
+        msg += f" in subject '{current_subject}'"
+    if module_name:
+        msg += f" ({module_name})"
+    msg += "![/green]"
+    
+    console.print(msg)
 
 
 @app.command()
-def list_questions(topic: Optional[str] = None):
-    """List questions, optionally filtered by topic."""
+def list_questions(
+    topic: Optional[str] = typer.Option(None, "--topic", "-t", help="Filter by topic"),
+    module: Optional[str] = typer.Option(None, "--module", "-m", help="Filter by module"),
+    all_subjects: bool = typer.Option(False, "--all", help="Show questions from all subjects")
+):
+    """List questions from both knowledge base and subject-specific question bank."""
     kb = KnowledgeBase()
-    questions = kb.get_questions(topic)
+    current_subject = _get_current_subject()
     
-    if not questions:
+    # Target subject for filtering
+    target_subject = None if all_subjects else current_subject
+
+    # Source 1: Manual questions from SQLite
+    manual_questions = kb.get_questions(topic=topic, subject=target_subject, module=module)
+    
+    # Source 2: Analyzed questions from JSON bank
+    analyzed_questions = []
+    
+    def normalize_mod(m):
+        if not m: return ""
+        m = str(m).lower().strip()
+        if m.startswith("module "):
+            m = m[7:].strip()
+        return m
+
+    norm_module = normalize_mod(module) if module else None
+
+    if target_subject:
+        # Fetch for current subject
+        raw_analyzed = kb.get_analyzed_questions(target_subject)
+        for q_dict in raw_analyzed:
+            q_module = q_dict.get("module")
+            q_topic = q_dict.get("topic")
+            
+            # Normalize q_module for matching
+            norm_q_mod = normalize_mod(q_module)
+            
+            # Apply filters
+            if topic and q_topic and topic.lower() not in q_topic.lower():
+                continue
+            if norm_module and norm_q_mod and norm_module != norm_q_mod:
+                continue
+            
+            analyzed_questions.append({
+                "source": "Bank",
+                "subject": target_subject,
+                "module": q_module or "N/A",
+                "topic": q_topic or "N/A",
+                "question": q_dict.get("text", "N/A"),
+                "difficulty": f"Marks: {q_dict.get('marks', '?')}" if q_dict.get('marks') else "N/A"
+            })
+    elif all_subjects:
+        # Fetch for all subjects
+        subjects_file = "data/subjects/subjects.json"
+        if Path(subjects_file).exists():
+            with open(subjects_file, 'r') as f:
+                subjects = json.load(f)
+                for s in subjects:
+                    s_name = s["name"]
+                    raw_analyzed = kb.get_analyzed_questions(s_name)
+                    for q_dict in raw_analyzed:
+                        q_module = q_dict.get("module")
+                        q_topic = q_dict.get("topic")
+                        
+                        norm_q_mod = normalize_mod(q_module)
+                        
+                        if topic and q_topic and topic.lower() not in q_topic.lower():
+                            continue
+                        if norm_module and norm_q_mod and norm_module != norm_q_mod:
+                            continue
+                            
+                        analyzed_questions.append({
+                            "source": "Bank",
+                            "subject": s_name,
+                            "module": q_module or "N/A",
+                            "topic": q_topic or "N/A",
+                            "question": q_dict.get("text", "N/A"),
+                            "difficulty": f"Marks: {q_dict.get('marks', '?')}" if q_dict.get('marks') else "N/A"
+                        })
+
+    # Combine and convert manual questions to the same display format
+    for q in manual_questions:
+        q_module = q.module
+        q_topic = q.topic
+        
+        norm_q_mod = normalize_mod(q_module)
+        
+        # Apply module filter if not already filtered by kb.get_questions (which might be too strict)
+        if norm_module and norm_q_mod and norm_module != norm_q_mod:
+            continue
+
+        analyzed_questions.append({
+            "source": "Manual",
+            "subject": q.subject or "N/A",
+            "module": q_module or "N/A",
+            "topic": q_topic or "N/A",
+            "question": q.question,
+            "difficulty": q.difficulty
+        })
+
+    display_list = analyzed_questions
+    
+    if not display_list:
         console.print("[yellow]No questions found.[/yellow]")
         return
     
-    table = Table(title=f"Questions{' for ' + topic if topic else ''}")
+    title = "Questions"
+    if topic: title += f" for '{topic}'"
+    if module: title += f" in module '{module}'"
+    if target_subject: title += f" of subject '{target_subject}'"
+    
+    table = Table(title=title)
+    table.add_column("Src", style="dim")
+    table.add_column("Subject", style="blue")
+    table.add_column("Module", style="magenta")
     table.add_column("Topic", style="cyan")
     table.add_column("Question", style="green")
-    table.add_column("Difficulty", style="yellow")
+    table.add_column("Meta", style="yellow")
     
-    for q in questions:
+    for q in display_list:
         table.add_row(
-            q.topic,
-            q.question[:60] + "..." if len(q.question) > 60 else q.question,
-            q.difficulty
+            q["source"],
+            q["subject"],
+            q["module"],
+            q["topic"],
+            q["question"][:60] + "..." if len(q["question"]) > 60 else q["question"],
+            q["difficulty"]
         )
     
     console.print(table)
@@ -1026,8 +1161,11 @@ def run_web():
     """Run the web interface."""
     console.print("[cyan]Starting web interface...[/cyan]")
     try:
-        #web_proc=subprocess.Popen([sys.executable, "streamlit/app.py"])
-        web_proc=subprocess.Popen(["streamlit", "run", "streamlit/app.py","--server.headless","true"])
+        # Use 'start' (Windows) or 'open' (Mac) to launch in new window
+        if platform.system() == "Windows":
+             web_proc = subprocess.Popen("start streamlit run streamlit/app.py", shell=True)
+        else:
+             web_proc = subprocess.Popen(["streamlit", "run", "streamlit/app.py"], start_new_session=True)
     except Exception as e:
         console.print(f"[red]Failed to start web interface: {e}[/red]")
 @app.command()
@@ -1037,6 +1175,220 @@ def stop_web():
     console.print("[cyan]Stopping web interface...[/cyan]")
     if web_proc:
         web_proc.terminate()
+
+@app.command()
+def pomodoro(
+    duration: int = typer.Option(25, "--duration", "-d", help="Duration in minutes"),
+    subject: str = typer.Option(None, "--subject", "-s", help="Subject to focus on")
+):
+    """Start a Pomodoro focus session."""
+    timer = PomodoroTimer()
+    
+    # Check if a session is already running
+    if timer.current_session and timer.current_session.end_time > datetime.now():
+        remaining = int((timer.current_session.end_time - datetime.now()).total_seconds() / 60)
+        console.print(f"[yellow]Session already running! {remaining}m remaining.[/yellow]")
+        if not typer.confirm("Stop current session and start new one?"):
+            return
+        timer.current_session = None
+
+    if not subject:
+        # Try to get from global context
+        try:
+             with open("data/.current_subject", "r") as f:
+                 subject = f.read().strip()
+        except:
+             subject = "General"
+
+    console.print(f"[bold green]🍅 Starting {duration}m focus session for '{subject}'...[/bold green]")
+    timer.start_session(duration, subject)
+    
+    # Simple countdown
+    try:
+        total_seconds = duration * 60
+        with typer.progressbar(range(total_seconds), label="Focusing...") as progress:
+            for _ in progress:
+                time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Session paused/cancelled.[/yellow]")
+        return
+
+    # Finish
+    console.print("\n[bold green]⏰ Session Complete![/bold green]")
+    notes = typer.prompt("Session notes (optional)", default="")
+    session = timer.complete_session(notes)
+    
+    # Show rewards
+    console.print(f"[cyan]Logged! Earned {session.xp_earned} XP[/cyan]")
+    
+    # Show stats
+    stats = timer.get_stats()
+    console.print(f"Today: {stats['daily_count']} sessions ({stats['daily_minutes']}m)")
+
+
+@app.command(name="progress")
+def show_progress():
+    """Show detailed progress and stats."""
+    gm = GamificationManager()
+    progress = gm._load_progress()
+    
+    table = Table(title="🏆 User Progress 🏆")
+    table.add_column("Level", style="cyan")
+    table.add_column("XP", style="green")
+    table.add_column("Streak", style="magenta")
+    
+    table.add_row(str(progress.current_level), f"{progress.total_points}/{progress.points_to_next_level}", f"{progress.current_streak} days 🔥")
+    console.print(table)
+    
+    # Achievements
+    if progress.achievements:
+        console.print("\n[bold]Unlocked Achievements:[/bold]")
+        for a in progress.achievements:
+            console.print(f"🏅 {a.name}: {a.description}")
+
+@app.command(name="todo-add")
+def todo_add(
+    title: str = typer.Argument(..., help="Task title"),
+    description: str = typer.Option("", "--desc", help="Task description"),
+    priority: str = typer.Option("medium", "--priority", "-p", help="Priority (low/medium/high)"),
+    due: str = typer.Option(None, "--due", help="Due date (YYYY-MM-DD)")
+):
+    """Add a new task."""
+    tm = TodoManager()
+    
+    # Context
+    subject = None
+    try:
+         with open("data/.current_subject", "r") as f:
+             subject = f.read().strip()
+    except: pass
+    
+    due_date = None
+    if due:
+        try:
+             due_date = datetime.strptime(due, "%Y-%m-%d")
+        except:
+             console.print("[red]Invalid date format. Use YYYY-MM-DD[/red]")
+             return
+
+    item = tm.add_todo(title, description, priority, subject, due_date)
+    console.print(f"[green]Task added! ID: {item.id}[/green]")
+
+@app.command(name="todo-list")
+def todo_list(
+    status: str = typer.Option("pending", "--status", help="Filter by status (pending/done/all)")
+):
+    """List tasks."""
+    tm = TodoManager()
+    subject = None
+    try:
+         with open("data/.current_subject", "r") as f:
+             subject = f.read().strip()
+    except: pass
+    
+    todos = tm.get_todos(status=status if status != "all" else None, subject=subject)
+    
+    if not todos:
+        console.print("[yellow]No tasks found.[/yellow]")
+        return
+        
+    table = Table(title=f"Tasks ({status})")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title", style="white")
+    table.add_column("Priority", style="magenta")
+    table.add_column("Due", style="green")
+    
+    for t in todos:
+        p_style = "red" if t.priority=="high" else "yellow" if t.priority=="medium" else "blue"
+        due_str = t.due_date.strftime("%Y-%m-%d") if t.due_date else "-"
+        table.add_row(t.id, t.title, f"[{p_style}]{t.priority}[/{p_style}]", due_str)
+        
+    console.print(table)
+
+@app.command(name="todo-complete")
+def todo_complete(task_id: str = typer.Argument(..., help="Task ID")):
+    """Complete a task."""
+    tm = TodoManager()
+    
+    # Find task to verify
+    # (Optional verify) but tm.complete handles it
+    
+    item = tm.complete_todo(task_id)
+    if item:
+        console.print(f"[green]Task '{item.title}' completed! +XP earned[/green]")
+    else:
+        console.print(f"[red]Task ID {task_id} not found.[/red]")
+
+@app.command(name="flashcard-create-deck")
+def flashcard_create_deck(name: str = typer.Argument(..., help="Deck name")):
+    """Create a new flashcard deck."""
+    fm = FlashcardManager()
+    subject = None
+    try:
+         with open("data/.current_subject", "r") as f:
+             subject = f.read().strip()
+    except: pass
+    
+    deck = fm.create_deck(name, subject)
+    console.print(f"[green]Deck '{deck.name}' created![/green]")
+
+@app.command(name="flashcard-add")
+def flashcard_add(
+    deck_name: str = typer.Argument(..., help="Deck name (fuzzy match)"),
+    front: str = typer.Argument(..., help="Front text"),
+    back: str = typer.Argument(..., help="Back text")
+):
+    """Add a card to a deck."""
+    fm = FlashcardManager()
+    decks = fm.list_decks()
+    
+    # Simple fuzzy search
+    target = None
+    for d in decks:
+        if deck_name.lower() in d.name.lower():
+            target = d
+            break
+            
+    if not target:
+        console.print(f"[red]Deck matching '{deck_name}' not found.[/red]")
+        return
+        
+    fm.add_card(target.id, front, back)
+    console.print(f"[green]Card added to '{target.name}'![/green]")
+
+@app.command(name="flashcard-study")
+def flashcard_study(deck_name: str = typer.Argument(..., help="Deck name")):
+    """Interactive study session."""
+    fm = FlashcardManager()
+    decks = fm.list_decks()
+    target = None
+    for d in decks:
+        if deck_name.lower() in d.name.lower():
+            target = d
+            break
+            
+    if not target:
+        console.print(f"[red]Deck not found.[/red]")
+        return
+        
+    cards = fm.get_cards_for_review(target.id)
+    if not cards:
+         console.print("[green]No cards due for review! Great job![/green]")
+         return
+         
+    console.print(f"Studying {len(cards)} cards from '{target.name}'...")
+    
+    for card in cards:
+        console.print(f"\n[bold cyan]Front:[/bold cyan] {card.front}")
+        typer.prompt("Press Enter to flip...")
+        console.print(f"[bold magenta]Back:[/bold magenta] {card.back}")
+        
+        rating = typer.prompt("Quality (0=Fail, 3=Pass, 5=Perfect)", type=int)
+        # Map simple 0-5 to SM-2 0-5
+        fm.review_card(target.id, card.id, rating)
+    
+    console.print("\n[green]Session complete![/green]")
+
 
 @app.command()
 def show_difference(example: str = "tcp_vs_udp"):
@@ -1116,43 +1468,130 @@ def exit():
     """Exit the CLI."""
     console.print("[cyan]Exiting AI Learning Engine CLI. Goodbye![/cyan]")
     raise typer.Exit()
-@app.callback(invoke_without_command=True)
-def main(ctx: typer.Context):
-    """Main callback for interactive mode."""
-    if ctx.invoked_subcommand is None:
-        # Interactive mode
-        while True:
-            try:
-                help()
-                user_input = typer.prompt("\nEnter command (or 'exit' to quit)")
-                if user_input.lower() == "exit":
-                    console.print("[cyan]Exiting AI Learning Engine CLI. Goodbye![/cyan]")
-                    break
-                
-                # Parse command and execute
-                try:
-                    # Split command into parts while respecting quoted strings
-                    args = shlex.split(user_input.strip())
-                    if args:
-                        # Invoke the app with the parsed arguments - Typer apps are callable
-                        app(args, standalone_mode=False)
-                except SystemExit:
-                    # Typer commands may raise SystemExit, catch and continue
-                    pass
-                except Exception as e:
-                    console.print(f"[red]Error executing command: {e}[/red]")
-                    console.print("[yellow]Type 'help' to see available commands[/yellow]")
-            except KeyboardInterrupt:
-                console.print("\n[yellow]Use 'exit' command to quit[/yellow]")
-                continue
-            except EOFError:
-                console.print("\n[cyan]Exiting...[/cyan]")
+@app.command(name="backup-list")
+def backup_list(
+    file_path: str = typer.Option(..., "--file", "-f", help="Path to the file to check backups for")
+):
+    """
+    List available backups for a specific file.
+    """
+    from core.persistence import get_persistence_manager
+    pm = get_persistence_manager()
+    backups = pm.list_backups(file_path)
+    
+    if not backups:
+        console.print(f"[yellow]No backups found for {file_path}[/yellow]")
+        return
+        
+    table = Table(title=f"Backups for {Path(file_path).name}")
+    table.add_column("Index", style="cyan")
+    table.add_column("Timestamp", style="green")
+    table.add_column("Filename", style="magenta")
+    
+    for i, backup in enumerate(backups):
+        try:
+            # Extract timestamp from filename pattern: *_YYYYMMDD_HHMMSS.ext
+            ts_part = backup.stem.split('_')[-2:]
+            timestamp = f"{ts_part[0]} {ts_part[1][:2]}:{ts_part[1][2:4]}:{ts_part[1][4:]}"
+        except:
+            timestamp = "Unknown"
+            
+        table.add_row(str(i), timestamp, backup.name)
+        
+    console.print(table)
+
+
+@app.command(name="backup-restore")
+def backup_restore(
+    file_path: str = typer.Option(..., "--file", "-f", help="Original file path"),
+    backup_index: int = typer.Option(None, "--index", "-i", help="Index of backup to restore (0 is newest)"),
+    backup_name: str = typer.Option(None, "--name", "-n", help="Exact filename of backup to restore")
+):
+    """
+    Restore a file from a backup.
+    """
+    if backup_index is None and backup_name is None:
+        console.print("[red]Error: Must provide either --index or --name[/red]")
+        return
+        
+    from core.persistence import get_persistence_manager
+    pm = get_persistence_manager()
+    backups = pm.list_backups(file_path)
+    
+    if not backups:
+        console.print(f"[red]No backups found for {file_path}[/red]")
+        return
+        
+    target_backup = None
+    if backup_name:
+        for b in backups:
+            if b.name == backup_name:
+                target_backup = b
                 break
+        if not target_backup:
+            console.print(f"[red]Backup '{backup_name}' not found[/red]")
+            return
+    else:
+        if backup_index < 0 or backup_index >= len(backups):
+            console.print(f"[red]Invalid index {backup_index}. Max index is {len(backups)-1}[/red]")
+            return
+        target_backup = backups[backup_index]
+        
+    if typer.confirm(f"Restore {target_backup.name} to {file_path}? This will overwrite current content."):
+        success, error = pm.restore_from_backup(file_path, target_backup)
+        if success:
+            console.print(f"[green]Successfully restored backup to {file_path}[/green]")
+        else:
+            console.print(f"[red]Restore failed: {error}[/red]")
+
+
+def interactive_mode():
+    """Run the CLI in interactive mode."""
+    # Show help at startup
+    console.print("[bold cyan]AI Learning Engine CLI[/bold cyan]")
+    try:
+        app(["--help"], standalone_mode=False)
+    except SystemExit:
+        pass
+    except Exception:
+        pass
+
+    console.print("\nType 'exit' to quit.\n")
+    
+    while True:
+        try:
+            user_input = typer.prompt("\n(cli) >>>", prompt_suffix=" ")
+            if user_input.lower() in ("exit", "quit"):
+                console.print("[cyan]Goodbye![/cyan]")
+                break
+            
+            # Split command into parts
+            try:
+                args = shlex.split(user_input.strip())
+            except ValueError:
+                console.print("[red]Error: mismatched quotes[/red]")
+                continue
+                
+            if not args:
+                continue
+
+            try:
+                # Invoke the app directly for speed
+                # standalone_mode=False prevents SystemExit on error/help
+                app(args, standalone_mode=False)
+            except SystemExit:
+                pass
+            except Exception as e:
+                console.print(f"[red]Error executing command: {e}[/red]")
+                
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Use 'exit' to quit[/yellow]")
+            continue
+        except EOFError:
+            break
 
 if __name__ == "__main__":
-    try:
+    if len(sys.argv) > 1:
         app()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        console.print(f"[red]An error occurred: {e}[/red]")
+    else:
+        interactive_mode()

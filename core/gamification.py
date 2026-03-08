@@ -20,20 +20,24 @@ class GamificationManager:
         
     def _load_progress(self) -> UserProgress:
         """Load user progress from file or create new."""
-        if self.data_path.exists():
-            try:
-                with open(self.data_path, 'r') as f:
-                    data = json.load(f)
-                    return UserProgress(**data)
-            except:
-                return UserProgress()
+        from .persistence import get_persistence_manager
+        
+        pm = get_persistence_manager()
+        progress, error = pm.load_model(self.data_path, UserProgress, auto_fix=True)
+        
+        if progress:
+            return progress
         return UserProgress()
     
     def save_progress(self):
-        """Save current progress to file."""
-        self.data_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.data_path, 'w') as f:
-            json.dump(self.progress.model_dump(), f, indent=2, default=str)
+        """Save current progress to file using safe persistence."""
+        from .persistence import get_persistence_manager
+        
+        pm = get_persistence_manager()
+        success, error = pm.save_model(self.progress, self.data_path, create_backup=True)
+        
+        if not success:
+            print(f"Warning: Failed to save progress: {error}")
     
     def add_points(self, points: int, reason: str = "") -> Dict:
         """

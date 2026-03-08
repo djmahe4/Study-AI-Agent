@@ -34,10 +34,25 @@ class FlashcardManager:
         return decks
     
     def save_deck(self, deck: FlashcardDeck):
-        """Save a single deck to file."""
+        """Save a single deck to file using safe persistence."""
+        from .persistence import get_persistence_manager
+        
+        pm = get_persistence_manager()
         file_path = self.data_path / f"{deck.id}.json"
-        with open(file_path, 'w') as f:
-            json.dump(deck.model_dump(), f, indent=2, default=str)
+        
+        temp_path = file_path.with_suffix('.tmp.json')
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump(deck.model_dump(), f, indent=2, default=str)
+            
+            if file_path.exists():
+                pm._create_backup(file_path)
+                file_path.unlink()
+            temp_path.rename(file_path)
+        except Exception as e:
+            print(f"Warning: Failed to save deck: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
     
     def create_deck(self, name: str, subject: Optional[str] = None, 
                    module: Optional[str] = None, description: Optional[str] = None) -> FlashcardDeck:
@@ -52,6 +67,18 @@ class FlashcardManager:
         self.save_deck(deck)
         return deck
     
+    def list_decks(self) -> List[FlashcardDeck]:
+        """List all available decks."""
+        return self.decks
+
+    def get_cards_for_review(self, deck_id: str, limit: int = 50) -> List[Flashcard]:
+        """Get cards due for review plus some new cards."""
+        try:
+            session_data = self.start_study_session(deck_id, max_review=limit)
+            return session_data["queue"]
+        except ValueError:
+            return []
+
     def get_deck(self, deck_id: str) -> Optional[FlashcardDeck]:
         """Get a specific deck by ID."""
         return next((d for d in self.decks if d.id == deck_id), None)

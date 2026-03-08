@@ -1,16 +1,30 @@
 [
   {
-    "name": "Machine Learning",
-    "folder_path": "data/subjects/machine_learning",
-    "syllabus_path": "data/subjects/machine_learning/syllabus/machine_learning.json",
+    "name": "Algorithm Analysis And Design",
+    "folder_path": "data/subjects/algorithm_analysis_and_design",
+    "syllabus_path": "data/subjects/algorithm_analysis_and_design/syllabus/syllabus.json",
     "question_bank_path": null,
-    "created_at": "2025-11-04 04:06:37.865065"
+    "created_at": "2026-01-29T21:39:35.270211"
+  },
+  {
+    "name": "Compiler Design",
+    "folder_path": "data/subjects/compiler_design",
+    "syllabus_path": "data/subjects/compiler_design/syllabus/syllabus.json",
+    "question_bank_path": null,
+    "created_at": "2026-01-29T21:39:35.306049"
   },
   {
     "name": "Computer Networks",
     "folder_path": "data/subjects/computer_networks",
     "syllabus_path": "data/subjects/computer_networks/syllabus/computer_networks.json",
-    "question_bank_path": "data/sample_questions.txt",
-    "created_at": "2025-11-04 04:07:16.052813"
+    "question_bank_path": null,
+    "created_at": "2026-01-29T21:39:35.316566"
+  },
+  {
+    "name": "Machine Learning",
+    "folder_path": "data/subjects/machine_learning",
+    "syllabus_path": "data/subjects/machine_learning/syllabus/machine_learning.json",
+    "question_bank_path": null,
+    "created_at": "2026-01-29T21:39:35.329022"
   }
 ]

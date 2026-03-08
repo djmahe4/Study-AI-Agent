@@ -23,20 +23,37 @@ class PomodoroTimer:
         
     def _load_sessions(self) -> List[PomodoroSession]:
         """Load past sessions from file."""
-        if self.data_path.exists():
-            try:
-                with open(self.data_path, 'r') as f:
-                    data = json.load(f)
-                    return [PomodoroSession(**s) for s in data]
-            except:
-                return []
-        return []
+        if not self.data_path.exists():
+            return []
+        
+        try:
+            with open(self.data_path, 'r') as f:
+                data = json.load(f)
+                return [PomodoroSession(**s) for s in data]
+        except Exception as e:
+            print(f"Warning: Failed to load Pomodoro sessions: {e}")
+            return []
     
     def save_sessions(self):
-        """Save all sessions to file."""
+        """Save all sessions to file using safe persistence."""
+        from .persistence import get_persistence_manager
+        
+        pm = get_persistence_manager()
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.data_path, 'w') as f:
-            json.dump([s.model_dump() for s in self.sessions], f, indent=2, default=str)
+        
+        temp_path = self.data_path.with_suffix('.tmp.json')
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump([s.model_dump() for s in self.sessions], f, indent=2, default=str)
+            
+            if self.data_path.exists():
+                pm._create_backup(self.data_path)
+                self.data_path.unlink()
+            temp_path.rename(self.data_path)
+        except Exception as e:
+            print(f"Warning: Failed to save sessions: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
     
     def start_session(self, subject: Optional[str] = None, topic: Optional[str] = None,
                      duration: int = 25, break_duration: int = 5) -> PomodoroSession:

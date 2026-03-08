@@ -107,8 +107,8 @@ class KnowledgeBase:
             return Topic.model_validate_json(row[0])
         return None
     
-    def get_questions(self, topic: Optional[str] = None) -> List[Question]:
-        """Retrieve questions, optionally filtered by topic."""
+    def get_questions(self, topic: Optional[str] = None, subject: Optional[str] = None, module: Optional[str] = None) -> List[Question]:
+        """Retrieve questions, optionally filtered by topic, subject, and module."""
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
@@ -120,7 +120,27 @@ class KnowledgeBase:
         rows = cursor.fetchall()
         conn.close()
         
-        return [Question.model_validate_json(row[0]) for row in rows]
+        questions = [Question.model_validate_json(row[0]) for row in rows]
+
+        # Apply additional filters in memory
+        if subject:
+            questions = [q for q in questions if q.subject and subject.lower() == q.subject.lower()]
+        
+        if module:
+            m_norm = module.lower().strip()
+            if m_norm.startswith("module "): m_norm = m_norm[7:].strip()
+            
+            filtered = []
+            for q in questions:
+                if not q.module: continue
+                qm_norm = q.module.lower().strip()
+                if qm_norm.startswith("module "): qm_norm = qm_norm[7:].strip()
+                
+                if m_norm == qm_norm:
+                    filtered.append(q)
+            questions = filtered
+
+        return questions
     
     def save_analyzed_questions(self, questions: List['AnalyzedQuestion'], subject_name: str) -> None:
         """Save analyzed exam questions to a subject-specific JSON file using QuestionBank model."""
@@ -171,17 +191,33 @@ class KnowledgeBase:
 
 
 def load_syllabus_from_json(file_path: str) -> Syllabus:
-    """Load a syllabus from a JSON file."""
-    with open(file_path, 'r',encoding='utf-8') as f:
-        data = json.load(f)
-    return Syllabus(**data)
+    """
+    Load a syllabus from a JSON file using safe persistence layer.
+    Auto-fixes missing IDs and creates backup if fixes are applied.
+    """
+    from .persistence import get_persistence_manager
+    
+    pm = get_persistence_manager()
+    model, error = pm.load_model(file_path, Syllabus, auto_fix=True)
+    
+    if error:
+        raise ValueError(f"Failed to load syllabus from {file_path}: {error}")
+    
+    return model
 
 
 def save_syllabus_to_json(syllabus: Syllabus, file_path: str) -> None:
-    """Save a syllabus to a JSON file."""
-    Path(file_path).parent.mkdir(parents=True, exist_ok=True)
-    with open(file_path, 'w',encoding='utf-8') as f:
-        json.dump(syllabus.model_dump(), f, indent=2, default=str)
+    """
+    Save a syllabus to a JSON file using safe persistence layer.
+    Automatically creates backup and validates before write.
+    """
+    from .persistence import get_persistence_manager
+    
+    pm = get_persistence_manager()
+    success, error = pm.save_model(syllabus, file_path, create_backup=True)
+    
+    if not success:
+        raise ValueError(f"Failed to save syllabus to {file_path}: {error}")
 
 
 def save_syllabus_to_markdown(syllabus: Syllabus, output_dir: str) -> None:

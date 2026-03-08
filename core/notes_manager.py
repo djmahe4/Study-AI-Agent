@@ -33,10 +33,25 @@ class NotesManager:
         return notes
     
     def save_note(self, note: CustomNote):
-        """Save a single note."""
+        """Save a single note using safe persistence."""
+        from .persistence import get_persistence_manager
+        
+        pm = get_persistence_manager()
         file_path = self.data_path / f"{note.id}.json"
-        with open(file_path, 'w') as f:
-            json.dump(note.model_dump(), f, indent=2, default=str)
+        
+        temp_path = file_path.with_suffix('.tmp.json')
+        try:
+            with open(temp_path, 'w') as f:
+                json.dump(note.model_dump(), f, indent=2, default=str)
+            
+            if file_path.exists():
+                pm._create_backup(file_path)
+                file_path.unlink()
+            temp_path.rename(file_path)
+        except Exception as e:
+            print(f"Warning: Failed to save note: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
     
     def create_note(self, title: str, content: str, subject: str,
                    module: Optional[str] = None, topic: Optional[str] = None,

@@ -20,20 +20,46 @@ class TodoManager:
         
     def _load_todos(self) -> List[TodoItem]:
         """Load TODO items from file."""
-        if self.data_path.exists():
-            try:
-                with open(self.data_path, 'r') as f:
-                    data = json.load(f)
-                    return [TodoItem(**item) for item in data]
-            except:
-                return []
-        return []
+        if not self.data_path.exists():
+            return []
+        
+        try:
+            with open(self.data_path, 'r') as f:
+                data = json.load(f)
+                return [TodoItem(**item) for item in data]
+        except Exception as e:
+            print(f"Warning: Failed to load TODOs: {e}")
+            return []
     
     def save_todos(self):
-        """Save all TODO items to file."""
+        """Save all TODO items to file using safe persistence."""
+        from .persistence import get_persistence_manager
+        
+        pm = get_persistence_manager()
         self.data_path.parent.mkdir(parents=True, exist_ok=True)
-        with open(self.data_path, 'w') as f:
-            json.dump([t.model_dump() for t in self.todos], f, indent=2, default=str)
+        
+        # Create temp backup before writing
+        temp_data = [t.model_dump() for t in self.todos]
+        temp_path = self.data_path.with_suffix('.tmp.json')
+        
+        try:
+            # Write to temp first
+            with open(temp_path, 'w') as f:
+                json.dump(temp_data, f, indent=2, default=str)
+            
+            # Backup existing if present
+            if self.data_path.exists():
+                pm._create_backup(self.data_path)
+            
+            # Move temp to actual
+            if self.data_path.exists():
+                self.data_path.unlink()
+            temp_path.rename(self.data_path)
+            
+        except Exception as e:
+            print(f"Warning: Failed to save TODOs: {e}")
+            if temp_path.exists():
+                temp_path.unlink()
     
     def add_todo(self, title: str, description: Optional[str] = None,
                 subject: Optional[str] = None, topic: Optional[str] = None,
@@ -137,6 +163,23 @@ class TodoManager:
         future = now + timedelta(days=days)
         return [t for t in self.todos 
                 if not t.completed and t.deadline and now <= t.deadline <= future]
+
+    def get_todos(self, status: Optional[str] = "pending", subject: Optional[str] = None) -> List[TodoItem]:
+        """
+        Get TODOs filtered by status and subject.
+        status: 'pending', 'completed'/'done', or None/'all'
+        """
+        if status == "pending":
+            return self.get_pending_todos(subject)
+        elif status in ["completed", "done"]:
+            return self.get_completed_todos(subject)
+        else:
+            # Return all
+            todos = self.todos
+            if subject:
+                todos = [t for t in todos if t.subject and subject.lower() in t.subject.lower()]
+            # Sort: Pending first (urgeny), then Completed (recent)
+            return sorted(todos, key=lambda t: (t.completed, t.deadline or datetime.max))
     
     def get_stats(self) -> dict:
         """Get TODO statistics."""
