@@ -53,6 +53,192 @@ model = None
 web_proc = None
 client = None
 
+def _enrich_syllabus_from_questions(current_subject: str, questions):
+    """
+    Enrich syllabus.json and markdown notes with data from ingested questions.
+    Maps questions to modules/topics, updates importance_score and questions list.
+    Creates new topics for questions that don't match existing ones.
+    """
+    import re
+    
+    # 1. Load subject data
+    subjects_file = "data/subjects/subjects.json"
+    if not Path(subjects_file).exists():
+        console.print("[yellow]No subjects.json found. Skipping enrichment.[/yellow]")
+        return
+        
+    with open(subjects_file, 'r') as f:
+        subjects = json.load(f)
+    subject_data = next((s for s in subjects if s["name"] == current_subject), None)
+    
+    if not subject_data:
+        console.print(f"[yellow]Subject '{current_subject}' not found. Skipping enrichment.[/yellow]")
+        return
+    
+    syllabus_path = subject_data.get("syllabus_path")
+    if not syllabus_path or not Path(syllabus_path).exists():
+        console.print("[yellow]Syllabus JSON not found. Skipping enrichment.[/yellow]")
+        return
+    
+    # 2. Load syllabus
+    syllabus = load_syllabus_from_json(syllabus_path)
+    
+    # 3. Build module lookup — supports both name-based and numeric matching
+    def _normalize(name: str) -> str:
+        n = name.lower().strip()
+        n = re.sub(r'^module\s*\d+\s*[:\-]\s*', '', n)
+        return n
+    
+    def _extract_module_number(name: str):
+        """Extract numeric module number from name like 'Module 3: Bottom-Up Parsing'."""
+        m = re.search(r'module\s*(\d+)', name, re.IGNORECASE)
+        return m.group(1) if m else None
+    
+    # Map by normalized name, by module number, and by order
+    module_by_name = {}
+    module_by_number = {}
+    module_by_order = {}
+    for module in syllabus.modules:
+        module_by_name[_normalize(module.name)] = module
+        num = _extract_module_number(module.name)
+        if num:
+            module_by_number[num] = module
+        if hasattr(module, 'order') and module.order:
+            module_by_order[str(module.order)] = module
+    
+    def _find_module(q_module_str: str):
+        """Find matching module using multiple strategies."""
+        q_mod = q_module_str.strip()
+        
+        # Strategy 1: Pure numeric — match by module number or order
+        if q_mod.isdigit():
+            if q_mod in module_by_number:
+                return module_by_number[q_mod]
+            if q_mod in module_by_order:
+                return module_by_order[q_mod]
+        
+        # Strategy 2: Exact normalized name match
+        q_norm = _normalize(q_mod)
+        if q_norm in module_by_name:
+            return module_by_name[q_norm]
+        
+        # Strategy 3: Extract number from "Module 3" or similar
+        num = _extract_module_number(q_mod)
+        if num and num in module_by_number:
+            return module_by_number[num]
+        
+        # Strategy 4: Fuzzy substring match
+        for mod_norm, mod_obj in module_by_name.items():
+            if q_norm in mod_norm or mod_norm in q_norm:
+                return mod_obj
+        
+        return None
+    
+    def _score_topic(topic, q_text_lower: str) -> int:
+        """Score how well a question matches a topic."""
+        score = 0
+        # Topic name words (weight=3 for strong identifiers)
+        for word in topic.name.lower().split():
+            if len(word) > 3 and word in q_text_lower:
+                score += 3
+        # Key points (weight=2)
+        for kp in topic.key_points:
+            kp_lower = kp.lower()
+            # Full phrase match is strongest
+            if kp_lower in q_text_lower:
+                score += 5
+            else:
+                for word in kp_lower.split():
+                    if len(word) > 3 and word in q_text_lower:
+                        score += 1
+        # Subtopics (weight=2)
+        for st in topic.subtopics:
+            if st.lower() in q_text_lower:
+                score += 4
+        return score
+    
+    def _derive_topic_name(q_text: str) -> str:
+        """Derive a short topic name from question text."""
+        # Take the first meaningful clause (up to 60 chars)
+        text = q_text.strip()
+        # Remove common question prefixes
+        text = re.sub(r'^(explain|describe|discuss|what\s+is|define|compare|differentiate|illustrate|write\s+a?\s*note\s+on|with\s+an?\s+example)\s*', '', text, flags=re.IGNORECASE)
+        # Take first sentence or up to 60 chars
+        text = text.split('.')[0].split('?')[0].strip()
+        if len(text) > 60:
+            text = text[:57] + "..."
+        return text.capitalize() if text else "Miscellaneous"
+    
+    # 4. Map questions to modules and topics
+    enriched_count = 0
+    new_topics_count = 0
+    MATCH_THRESHOLD = 3  # Minimum score to consider a topic match
+    
+    for q in questions:
+        if not q.module or q.module == "Unknown":
+            continue
+        
+        matched_module = _find_module(q.module)
+        if not matched_module:
+            console.print(f"[dim]  Skipped Q{q.number}: module '{q.module}' not found in syllabus[/dim]")
+            continue
+        
+        # Score each topic
+        q_text_lower = q.text.lower()
+        scored_topics = [(topic, _score_topic(topic, q_text_lower)) for topic in matched_module.topics]
+        scored_topics.sort(key=lambda x: x[1], reverse=True)
+        
+        best_topic = None
+        if scored_topics and scored_topics[0][1] >= MATCH_THRESHOLD:
+            best_topic = scored_topics[0][0]
+        
+        # No good match — create a new topic
+        if not best_topic:
+            new_name = _derive_topic_name(q.text)
+            # Check if we already created a similar topic this run
+            existing_new = None
+            for t in matched_module.topics:
+                if t.name.lower() == new_name.lower():
+                    existing_new = t
+                    break
+            
+            if existing_new:
+                best_topic = existing_new
+            else:
+                best_topic = Topic(
+                    name=new_name,
+                    summary=f"Topic derived from exam question Q{q.number}.",
+                    key_points=[],
+                    questions=[],
+                )
+                matched_module.topics.append(best_topic)
+                new_topics_count += 1
+                console.print(f"[cyan]  + New topic: '{new_name}' in {matched_module.name}[/cyan]")
+        
+        # 5. Enrich the topic
+        q_preview = q.text.strip()[:200]
+        year_tag = f"[{q.year}]" if q.year and q.year != "Unknown" else ""
+        q_entry = f"{year_tag} Q{q.number}: {q_preview}"
+        
+        if q_entry not in best_topic.questions:
+            best_topic.questions.append(q_entry)
+        
+        best_topic.importance_score += q.marks if q.marks > 0 else 1
+        enriched_count += 1
+    
+    if enriched_count == 0:
+        console.print("[yellow]No questions could be mapped to syllabus topics.[/yellow]")
+        return
+    
+    # 6. Save enriched syllabus.json
+    save_syllabus_to_json(syllabus, syllabus_path)
+    console.print(f"[green]✓ Enriched syllabus with {enriched_count} questions ({new_topics_count} new topics created).[/green]")
+    
+    # 7. Update markdown notes (re-generates with enriched data)
+    notes_dir = f"{subject_data['folder_path']}/notes"
+    save_syllabus_to_markdown(syllabus, notes_dir)
+    console.print(f"[green]✓ Updated markdown notes in {notes_dir}[/green]")
+
 @app.command()
 def configure_exam(name: str = typer.Argument(..., help="Name of the exam pattern (e.g. 'University2024')")):
     """
@@ -158,9 +344,8 @@ def ingest_paper(
     for q in questions:
         console.print(f" - Q{q.number} ({q.module}): {q.text[:50]}...")
         
-    # Update Importance (Simple Stub)
-    # TODO: Load syllabus, increment scores based on module frequency
-    console.print("[yellow]Topic importance update pending (requires topic-level mapping, currently at Module level).[/yellow]")
+    # === Enrich syllabus.json with extracted questions ===
+    _enrich_syllabus_from_questions(current_subject, questions)
 
 @app.command()
 def get_pyq_answers(
@@ -185,12 +370,67 @@ def get_pyq_answers(
     
     # Filter
     if module:
-        questions = [q for q in questions if q.module and module.lower() in q.module.lower()]
+        # Re-use normalization logic for robust module filtering
+        import re
+        def _normalize(name: str) -> str:
+            n = (name or "").lower().strip()
+            return re.sub(r'^module\s*\d+\s*[:\-]\s*', '', n)
+        
+        def _extract_module_number(name: str):
+            m = re.search(r'module\s*(\d+)', name or "", re.IGNORECASE)
+            return m.group(1) if m else None
+
+        filtered_qs = []
+        mod_filter_num = module.strip()
+        mod_filter_norm = _normalize(module)
+        
+        for q in questions:
+            q_num = _extract_module_number(q.module)
+            q_norm = _normalize(q.module)
+            
+            # Match by numeric ID (e.g. "--module 1" matches q.module="1" or q.module="Module 1: Intro")
+            if mod_filter_num.isdigit() and (q.module == mod_filter_num or q_num == mod_filter_num):
+                filtered_qs.append(q)
+            # Match by string inclusion
+            elif mod_filter_norm in q_norm or mod_filter_norm in q.module.lower():
+                filtered_qs.append(q)
+                
+        questions = filtered_qs
         
     if not questions:
         console.print("[yellow]No questions found for criteria.[/yellow]")
         return
         
+    # Interactive Selection
+    console.print(f"\n[cyan]Found {len(questions)} matching questions:[/cyan]")
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("No.", style="dim", width=4)
+    table.add_column("Yr", style="cyan", width=6)
+    table.add_column("Mk", style="green", width=4)
+    table.add_column("Module", style="blue")
+    table.add_column("Preview")
+    
+    for i, q in enumerate(questions, 1):
+        year = q.year if q.year and q.year != 'Unknown' else '-'
+        preview = q.text[:60] + "..." if len(q.text) > 60 else q.text
+        table.add_row(str(i), year, str(q.marks), q.module[:15], preview.replace('\n', ' '))
+        
+    console.print(table)
+    
+    selection = typer.prompt("\nEnter question numbers to generate answers for (comma-separated, e.g. 1,3,4) or 'all'", default="all")
+    if selection.lower() != 'all':
+        try:
+            indices = [int(x.strip()) - 1 for x in selection.split(",")]
+            selected_questions = [questions[i] for i in indices if 0 <= i < len(questions)]
+            if not selected_questions:
+                console.print("[red]No valid questions selected. Exiting.[/red]")
+                return
+            questions = selected_questions
+            console.print(f"[green]Selected {len(questions)} questions for generation.[/green]")
+        except ValueError:
+            console.print("[red]Invalid format. Please use comma-separated numbers. Exiting.[/red]")
+            return
+
     # Initialize Analyzer for generation
     load_dotenv()
     analyzer = QuestionPaperAnalyzer(os.getenv("GOOGLE_API_KEY"))
@@ -331,29 +571,16 @@ def help():
 @app.command()
 def generate_mindmap_v2(
     scope: str = typer.Option("subject", help="Scope: 'subject' (all topics in current subject) or 'global'"),
+    module: Optional[int] = typer.Option(None, "--module", "-m", help="Module number to generate diagrams for (e.g. 1, 2, 3)"),
     output_file: str = "mindmap.mmd"
 ):
     """
     Generate Mermaid mindmaps.
     If scope is 'subject', generates <topic>_mermaid.md for each topic in the current subject.
     If scope is 'global', generates a single mindmap for all topics.
+    Use --module N to generate only for a specific module.
     """
-    kb = KnowledgeBase()
-    
-    if scope == "global":
-        topics = kb.get_topics()
-        if not topics:
-            console.print("[yellow]No topics found.[/yellow]")
-            return
-        try:
-            generator = MindMapGenerator2(topics)
-            output_path = generator.save(output_file)
-            console.print(f"[bold green]Global Mermaid mind map generated at: {output_path}[/bold green]")
-        except Exception as e:
-            console.print(f"[red]Failed to generate mind map: {e}[/red]")
-        return
-
-    # Subject Scope
+    # Subject Scope check (required for both 'subject' and 'global' now)
     current_subject = _get_current_subject()
     if not current_subject:
         console.print("[red]No subject selected. Use 'select-subject' first.[/red]")
@@ -364,34 +591,101 @@ def generate_mindmap_v2(
         subjects = json.load(f)
     subject_data = next((s for s in subjects if s["name"] == current_subject), None)
     
-    if not subject_data: return
+    if not subject_data: 
+        console.print(f"[red]Subject '{current_subject}' data not found.[/red]")
+        return
 
     syllabus_path = subject_data.get("syllabus_path")
     syllabus = load_syllabus_from_json(syllabus_path)
-    
-    count = 0
-    with console.status(f"[cyan]Generating mindmaps for {current_subject}...[/cyan]"):
-        base_dir = Path(subject_data['folder_path']) / "notes"
-        
-        for i, module in enumerate(syllabus.modules, 1):
-            safe_mod_name = module.name.replace(":", " -").replace("/", "-").strip()
+
+    # Filter modules if --module is specified
+    if module is not None:
+        selected_modules = [m for m in syllabus.modules if getattr(m, 'order', 0) == module]
+        if not selected_modules:
+            # Fallback: try by 1-based index
+            if 1 <= module <= len(syllabus.modules):
+                selected_modules = [syllabus.modules[module - 1]]
+            else:
+                console.print(f"[red]Module {module} not found. Available: 1-{len(syllabus.modules)}[/red]")
+                return
+        console.print(f"[cyan]Generating diagrams for Module {module}: {selected_modules[0].name}[/cyan]")
+    else:
+        selected_modules = syllabus.modules
+
+    if scope == "global":
+        # 'global' scope now means 'all modules/topics in the current subject'
+        # Collect all topics from the syllabus
+        topics = []
+        for mod in selected_modules:
+            topics.extend(mod.topics)
             
-            for j, topic in enumerate(module.topics, 1):
-                safe_topic_name = topic.name.replace("/", "-").strip()
-                safe_topic_name = "".join([c for c in safe_topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+        if not topics:
+            console.print("[yellow]No topics found in syllabus.[/yellow]")
+            return
+        try:
+            generator = MindMapGenerator2(topics)
+            output_path = generator.save(output_file)
+            console.print(f"[bold green]Global mind map for '{current_subject}' generated at: {output_path}[/bold green]")
+        except Exception as e:
+            console.print(f"[red]Failed to generate mind map: {e}[/red]")
+        return
+
+    # Subject Scope — generate AI diagrams per topic
+    load_dotenv()
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        console.print("[red]GOOGLE_API_KEY not found. Set it first.[/red]")
+        return
+
+    from core.diagram_generator import MermaidDiagramGenerator
+    diagram_gen = MermaidDiagramGenerator(api_key)
+
+    count = 0
+    total_topics = sum(len(m.topics) for m in selected_modules)
+    base_dir = Path(subject_data['folder_path']) / "notes"
+    
+    for i, mod in enumerate(selected_modules, 1):
+        safe_mod_name = mod.name.replace(":", " -").replace("/", "-").strip()
+        
+        for j, topic in enumerate(mod.topics, 1):
+            safe_topic_name = topic.name.replace("/", "-").strip()
+            safe_topic_name = "".join([c for c in safe_topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+            
+            # Read the topic's notes markdown file
+            notes_file = base_dir / safe_mod_name / f"{j}. {safe_topic_name}.md"
+            mermaid_file = base_dir / safe_mod_name / f"{j}. {safe_topic_name}_mermaid.md"
+            
+            if notes_file.exists():
+                with open(notes_file, 'r', encoding='utf-8') as f:
+                    markdown_content = f.read()
+            else:
+                # Fallback to summary + key_points if notes file missing
+                markdown_content = f"# {topic.name}\n\n**Summary:** {topic.summary}\n"
+                if topic.key_points:
+                    markdown_content += "\n## Key Points\n" + "\n".join(f"- {kp}" for kp in topic.key_points)
+            
+            count += 1
+            console.print(f"  [{count}/{total_topics}] Generating diagrams for [cyan]{topic.name}[/cyan]...")
+            
+            try:
+                diagram_set = diagram_gen.generate_diagrams(
+                    topic_name=topic.name,
+                    markdown_content=markdown_content,
+                    module_name=mod.name,
+                    subject_name=current_subject
+                )
+                MindMapGenerator2.save_ai_diagrams_as_markdown(str(mermaid_file), diagram_set)
+                n_diags = len(diagram_set.diagrams)
+                console.print(f"    [green]✓ {n_diags} diagram(s) saved[/green]")
+            except Exception as e:
+                console.print(f"    [red]✗ Error: {e}[/red]")
+
+            
+            # Rate limit: 15s between topics (5 RPM)
+            if count < total_topics:
+                time.sleep(15)
                 
-                # Construct path
-                file_path = base_dir / safe_mod_name / f"{j}. {safe_topic_name}_mermaid.md"
-                
-                # Generate
-                # Create a single-topic generator for focused map
-                # or pass relevant connected topics? For now, just the topic itself.
-                # Actually MindMapGenerator2 takes a list.
-                generator = MindMapGenerator2([topic])
-                generator.save_as_markdown(str(file_path), title=f"Mindmap: {topic.name}")
-                count += 1
-                
-    console.print(f"[bold green]Generated {count} mindmaps in {base_dir}[/bold green]")
+    console.print(f"[bold green]Generated conceptual diagrams for {count} topics in {base_dir}[/bold green]")
 
 @app.command()
 def save_notes(output_file: Optional[str] = None):
@@ -684,8 +978,16 @@ def create_subject(
                 end_hint = "Ctrl+Z then Enter"
             else:
                 end_hint = "Ctrl+D"
-            sys.stdout.write(f"[yellow]Enter syllabus text ({end_hint} to finish):[/yellow]\n")
-            syllabus_text = sys.stdin.read()
+            sys.stdout.write(f"[yellow]Enter syllabus text ({end_hint} or empty line + Enter to finish):[/yellow]\n")
+            lines = []
+            while True:
+                line = sys.stdin.readline()
+                if not line: # EOF
+                    break
+                if not line.strip() and lines: # Empty line after some content finishes input
+                    break
+                lines.append(line)
+            syllabus_text = "".join(lines)
         except KeyboardInterrupt:
             console.print("[red]Input cancelled by user.[/red]")
             syllabus_text = ""

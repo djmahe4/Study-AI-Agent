@@ -112,20 +112,25 @@ class KnowledgeBase:
         conn = sqlite3.connect(self.db_path)
         cursor = conn.cursor()
         
-        if topic:
-            cursor.execute("SELECT data FROM questions WHERE topic = ?", (topic,))
-        else:
-            cursor.execute("SELECT data FROM questions")
+        query = "SELECT data FROM questions WHERE 1=1"
+        params = []
         
+        if topic:
+            query += " AND topic = ?"
+            params.append(topic)
+        
+        if subject:
+            # Use json_extract to filter by subject field inside the 'data' JSON blob
+            query += " AND LOWER(json_extract(data, '$.subject')) = LOWER(?)"
+            params.append(subject)
+        
+        cursor.execute(query, params)
         rows = cursor.fetchall()
         conn.close()
         
         questions = [Question.model_validate_json(row[0]) for row in rows]
-
-        # Apply additional filters in memory
-        if subject:
-            questions = [q for q in questions if q.subject and subject.lower() == q.subject.lower()]
         
+        # Apply module filter in memory (normalization logic is more complex)
         if module:
             m_norm = module.lower().strip()
             if m_norm.startswith("module "): m_norm = m_norm[7:].strip()
@@ -137,6 +142,8 @@ class KnowledgeBase:
                 if qm_norm.startswith("module "): qm_norm = qm_norm[7:].strip()
                 
                 if m_norm == qm_norm:
+                    filtered.append(q)
+                elif m_norm in qm_norm or qm_norm in m_norm: # Added substring match for better UX
                     filtered.append(q)
             questions = filtered
 

@@ -25,6 +25,22 @@ class MermaidDiagram(BaseModel):
     title: Optional[str] = None
     script: str = Field(..., description="The raw Mermaid script content")
 
+
+class ConceptRelationship(BaseModel):
+    """A relationship between two concepts within a topic."""
+    from_concept: str = Field(..., description="Source concept")
+    to_concept: str = Field(..., description="Target concept")
+    relationship: str = Field(..., description="Relationship type e.g. 'uses', 'extends', 'precedes', 'produces'")
+
+
+class ConceptDiagramSet(BaseModel):
+    """Gemini's structured response: a set of conceptual diagrams for a topic."""
+    topic_name: str
+    summary: str = Field(..., description="One-line conceptual summary of the topic")
+    diagrams: List[MermaidDiagram] = Field(default_factory=list, description="List of mermaid diagrams for conceptual understanding")
+    relationships: List[ConceptRelationship] = Field(default_factory=list, description="Key concept relationships identified")
+
+
 class Topic(BaseModel):
     """
     Represents a learning topic with structured knowledge.

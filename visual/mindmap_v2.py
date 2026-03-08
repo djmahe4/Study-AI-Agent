@@ -1,5 +1,5 @@
 from mermaid.graph import Graph
-from core.models import Topic
+from core.models import Topic, ConceptDiagramSet
 from typing import List
 
 class MindMapGenerator2:
@@ -59,4 +59,35 @@ class MindMapGenerator2:
         with open(filepath, 'w', encoding='utf-8') as f:
             f.write(content)
         
+        return filepath
+
+    @staticmethod
+    def save_ai_diagrams_as_markdown(filepath: str, diagram_set: ConceptDiagramSet) -> str:
+        """
+        Save AI-generated conceptual diagrams as a Markdown file.
+        """
+        import os
+        os.makedirs(os.path.dirname(filepath) if os.path.dirname(filepath) else '.', exist_ok=True)
+
+        content = f"# {diagram_set.topic_name}\n\n"
+        content += f"**Conceptual Summary:** {diagram_set.summary}\n\n"
+
+        # Relationships table
+        if diagram_set.relationships:
+            content += "## Key Concept Relationships\n\n"
+            content += "| From | → | To | Relationship |\n"
+            content += "|------|---|----|--------------|\n"
+            for rel in diagram_set.relationships:
+                content += f"| {rel.from_concept} | → | {rel.to_concept} | {rel.relationship} |\n"
+            content += "\n"
+
+        # Diagrams
+        for i, diag in enumerate(diagram_set.diagrams, 1):
+            title = diag.title or f"Diagram {i}"
+            content += f"## {title}\n\n"
+            content += f"```mermaid\n{diag.script}\n```\n\n"
+
+        with open(filepath, 'w', encoding='utf-8') as f:
+            f.write(content)
+
         return filepath
