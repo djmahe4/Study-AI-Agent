@@ -6,9 +6,27 @@ This document outlines the standard workflow for the AI Learning Engine and the 
 
 The system is designed to transform raw educational content into structured, interactive learning materials.
 
+```mermaid
+flowchart TD
+    Init[1. Setup & Config] --> Subj[2. Subject Creation\nSyllabus Parsing]
+    Subj --> |Gemini API + Cache| JSON[syllabus.json]
+    JSON --> Refine[3. UI Refinement]
+    JSON -.-> Pattern[4. Exam Pattern Config]
+    Pattern --> Ingest[5. Paper Ingestion]
+    Ingest --> |RAG + Gemini| Enrich[Syllabus Enrichment]
+    Enrich --> JSON
+    
+    JSON --> Study[6. Study Phase]
+    Study --> Notes[Markdown Notes]
+    Study --> Maps[Mermaid Diagrams]
+    Study --> PYQ[Targeted PYQ Solutions]
+    
+    Study --> Deepen[7. RAG & YouTube]
+```
+
 ### 1. Setup
 **Command:** `init` -> `set-api-key`
-- Initializes the local knowledge base (`data/memory.db`) and directory structure.
+- Initializes the local knowledge base (`data/memory.db`), caching layer (`data/cache.db`), and directory structure.
 - Configures the Google Gemini API key for AI processing.
 
 ### 2. Subject Creation (Input & Processing)

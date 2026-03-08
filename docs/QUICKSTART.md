@@ -1,6 +1,20 @@
 # 🚀 Quick Start Guide
 
-Get started with the AI Learning Engine v2.0 in 5 minutes!
+Get started with the AI Learning Engine in 5 minutes!
+
+```mermaid
+flowchart LR
+    A[1. Install & Setup] --> B[2. create-subject]
+    B --> C[3. generate-mindmap-v2]
+    C --> D[4. ingest-paper]
+    D --> E[5. get-pyq-answers]
+    
+    style A fill:#4a148c,stroke:#ab47bc,color:#fff
+    style B fill:#004d40,stroke:#26a69a,color:#fff
+    style C fill:#0d47a1,stroke:#42a5f5,color:#fff
+    style D fill:#e65100,stroke:#ffa726,color:#fff
+    style E fill:#b71c1c,stroke:#ef5350,color:#fff
+```
 
 ## Prerequisites
 - Python 3.10+

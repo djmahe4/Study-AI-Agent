@@ -8,6 +8,7 @@ An AI-augmented intelligent learning system that teaches with mind maps, animati
 
 - **📚 Structured Knowledge**: Pydantic-based data models for organizing learning content
 - **🗺️ Mind Maps**: Mermaid.js concepts visualization embedded in Markdown
+- **⚡ Persistent LLM Cache**: SQLite-based Gemini caching for instant repeated generations and quota saving
 - **🎬 Animations**: AI-generated educational animations (GIF/Video) using OpenCV
 - **❓ Quiz Mode**: Interactive Q&A with retrieval practice
 - **📊 Difference Tables**: Learning through contrasts and comparisons

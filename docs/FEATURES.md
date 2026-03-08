@@ -3,6 +3,7 @@
 ## 🧠 Core Intelligence
 - **AI Syllabus Processing**: Uses Google Gemini 2.0 to parse raw syllabus text into a structured `Subject -> Module -> Topic` hierarchy.
 - **Contextual RAG**: Retrieves answers from local knowledge bases or YouTube videos using LangChain and FAISS.
+- **Persistent LLM Cache (New!)**: A local SQLite cache (`data/cache.db`) intercepts duplicate Gemini API requests across diagram generation and syllabus parsing, drastically reducing API quota usage and dropping response times to near-zero.
 - **Smart Mnemonics**: Automatically generates acronyms and memory aids for complex topics.
 
 ## 📚 Subject Management
