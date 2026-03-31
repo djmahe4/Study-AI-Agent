@@ -56,7 +56,7 @@ def ocr_page(page):
                             break
                         prob += word + " "
                 if prob != "":
-                    if data["word_num"][i] > data["word_num"][i - 1] + 1:
+                    if i > 0 and data["word_num"][i] > data["word_num"][i - 1] + 1:
                         break
                     high.append(prob.strip())
                 ic(data["word_num"][i], text)
