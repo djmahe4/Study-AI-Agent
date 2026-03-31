@@ -46,7 +46,7 @@ def ocr_page(page):
     for i, text in enumerate(data["text"]):
         if text.strip():
             try:
-                if data["text"][i + 1] == "" and data["text"][i + 2] == "":
+                if i + 2 < len(data["text"]) and data["text"][i + 1] == "" and data["text"][i + 2] == "":
                     for j in range(10):
                         # Bounds-check BEFORE accessing the element
                         if i + j >= len(data["text"]):
