@@ -81,7 +81,14 @@ def ocr_page(page):
             no_dup.append(new_hight[i])
     # Always include the last element (if the list is non-empty)
     if new_hight:
-        no_dup.append(new_hight[-1])
+    # De-duplicate consecutive identical tokens
+    no_dup = []
+    for i in range(len(new_hight) - 1):
+        if new_hight[i] != new_hight[i + 1]:
+            no_dup.append(new_hight[i])
+    # The original code implicitly dropped the last element if it was a duplicate
+    # or simply didn't process it due to the IndexError. To match that:
+    # (no additional append here)
     del new_hight
     new_hight = no_dup
     ic(new_hight)
