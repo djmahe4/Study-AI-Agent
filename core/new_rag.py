@@ -1,72 +1,111 @@
+"""
+Legacy OCR helper module for scanned PDF processing.
+
+.. note::
+    This module is superseded by the richer implementation in :mod:`core.rag`.
+    It is kept for backward compatibility.
+"""
+import logging
+
 import fitz  # PyMuPDF
 import pytesseract
 from PIL import Image
 import numpy as np
 from icecream import ic
 import tqdm
+
 ic.disable()
+
+logger = logging.getLogger(__name__)
 
 
 def ocr_page(page):
+    """
+    Perform OCR on a single PDF page and extract text tokens with coordinates.
+
+    Parameters
+    ----------
+    page:
+        A :class:`fitz.Page` object.
+
+    Returns
+    -------
+    tuple[list[dict], list[str]]
+        ``(ocr_lines, highlighted_words)`` where *ocr_lines* is a list of dicts
+        containing ``text``, ``x``, ``y``, ``width``, ``height`` and
+        *highlighted_words* is a de-duplicated list of significant word tokens.
+    """
     pix = page.get_pixmap(dpi=300)
     img = Image.frombytes("RGB", [pix.width, pix.height], pix.samples)
     data = pytesseract.image_to_data(img, output_type=pytesseract.Output.DICT)
 
     ocr_lines = []
-    high=[]
-    prob=""
+    high = []
+    prob = ""
 
     for i, text in enumerate(data["text"]):
         if text.strip():
-            #ic(data)
             try:
-                if data["text"][i+1]=="" and data["text"][i+2]=="":
+                if data["text"][i + 1] == "" and data["text"][i + 2] == "":
                     for j in range(10):
-                        if text==' ':
+                        # Bounds-check BEFORE accessing the element
+                        if i + j >= len(data["text"]):
                             break
-                        prob+=data["text"][i+j]+" "
-                if not prob=="":
-                    if data["word_num"][i]>data["word_num"][i-1]+1:
+                        word = data["text"][i + j]
+                        if word == " ":
+                            break
+                        prob += word + " "
+                if prob != "":
+                    if data["word_num"][i] > data["word_num"][i - 1] + 1:
                         break
                     high.append(prob.strip())
-                ic(data["word_num"][i],text)
-                prob=""
-            except:
+                ic(data["word_num"][i], text)
+                prob = ""
+            except (IndexError, KeyError):
+                # Gracefully handle end-of-list look-aheads and missing keys
                 pass
-            wn=0
             ocr_lines.append({
                 "text": text.strip(),
                 "x": data["left"][i],
                 "y": data["top"][i],
                 "width": data["width"][i],
-                "height": data["height"][i]
+                "height": data["height"][i],
             })
-    # ic(data.keys())
+
     ic(high)
-    # #ic(data)
-    # exit(0)
-    new_hight=[i for h in high for i in h.split()]
-    no_dup=[]
-    for i in range(len(new_hight)):
-        try:
-            if new_hight[i] ==new_hight[i+1]:
-                continue
-            else:
-                no_dup.append(new_hight[i])
-        except:
-            pass
-    del(new_hight)
-    new_hight=no_dup
+    new_hight = [word for h in high for word in h.split()]
+    # De-duplicate consecutive identical tokens without relying on exception handling
+    no_dup = []
+    for i in range(len(new_hight) - 1):
+        if new_hight[i] != new_hight[i + 1]:
+            no_dup.append(new_hight[i])
+    # Always include the last element (if the list is non-empty)
+    if new_hight:
+        no_dup.append(new_hight[-1])
+    del new_hight
+    new_hight = no_dup
     ic(new_hight)
-    # ic([i for i in new_hight if len(i)>1])
-    # exit(0)
-    return ocr_lines,[i for i in new_hight if len(i)>1]
+    return ocr_lines, [w for w in new_hight if len(w) > 1]
 
 
-def looks_like_heading(text):
-    if len(text) < 3: return False
-    if text.isdigit(): return False
-    # heuristics for headings
+def looks_like_heading(text: str) -> bool:
+    """
+    Heuristic to decide whether a text token looks like a section heading.
+
+    Parameters
+    ----------
+    text:
+        A single line of text from OCR output.
+
+    Returns
+    -------
+    bool
+        ``True`` if the text resembles a heading (title-cased or all-upper).
+    """
+    if len(text) < 3:
+        return False
+    if text.isdigit():
+        return False
     if text.istitle() or text.isupper():
         return True
     return False

@@ -15,6 +15,7 @@ An AI-augmented intelligent learning system that teaches with mind maps, animati
 - **📝 Exam Analysis**: Automated parsing of PDF question papers and answer generation
 - **💻 CLI Interface**: Rich interactive terminal interface
 - **🌐 Streamlit UI**: Web-based learning dashboard with schema editing
+- **🛡️ Input Validation**: All user inputs are sanitized with `bleach` + `markupsafe` before reaching the LLM
 
 ## 🏗️ Architecture
 
@@ -141,6 +142,7 @@ Create educational animations from text descriptions:
 
 ## 📚 Documentation
 
+- **[docs/FOR_YOUNG_LEARNERS.md](docs/FOR_YOUNG_LEARNERS.md)** - Simple guide for beginners (great starting point!)
 - **[docs/QUICKSTART.md](docs/QUICKSTART.md)** - Get started in 5 minutes
 - **[docs/FEATURES.md](docs/FEATURES.md)** - Complete feature list and examples
 - **[docs/WORKFLOW_AND_DATA.md](docs/WORKFLOW_AND_DATA.md)** - Detailed data flow and formats

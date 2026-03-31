@@ -1,22 +1,30 @@
 """
 Module for processing syllabus text using Gemini AI (google-genai SDK).
+
+All user-supplied inputs (syllabus text, subject names) are sanitized via
+:mod:`core.input_validator` before being embedded in LLM prompts.
+This defends against HTML/script injection and prompt-injection attacks.
 """
 import json
 import os
 import hashlib
 import logging
-logging.basicConfig(filename='gemini_processor.log', level=logging.INFO)
 from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from .models import Syllabus, Topic
 from .utils import normalize_subject_name, get_subject_dir
+from .input_validator import sanitize_syllabus_text, validate_subject_name
 from google import genai
 from google.genai import types
 import google.genai
 from pydantic import BaseModel as PydanticModel
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Configure logging (single call; avoid duplicate handlers)
+logging.basicConfig(
+    filename="gemini_processor.log",
+    level=logging.INFO,
+    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
+)
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path("data/cache/gemini")
@@ -85,15 +93,29 @@ class GeminiProcessor:
     def process_syllabus_text(self, syllabus_text: str, subject_name: str) -> Syllabus:
         """
         Process syllabus text using Gemini to extract structured data.
-        
+
+        User-supplied inputs are sanitized before being embedded in the prompt:
+
+        * ``syllabus_text`` is stripped of HTML and special characters via
+          :func:`core.input_validator.sanitize_syllabus_text`.
+        * ``subject_name`` is validated and cleaned via
+          :func:`core.input_validator.validate_subject_name`.
+
         Args:
-            syllabus_text: Raw syllabus text
-            subject_name: Name of the subject
-            
+            syllabus_text: Raw syllabus text (from file or user paste).
+            subject_name: Name of the subject.
+
         Returns:
-            Structured Syllabus object
+            Structured :class:`~core.models.Syllabus` object.
+
+        Raises:
+            ValueError: If the subject name is invalid after sanitization.
         """
-        prompt = self._create_extraction_prompt(syllabus_text, subject_name)
+        # Sanitize inputs before constructing the prompt
+        clean_syllabus = sanitize_syllabus_text(syllabus_text)
+        clean_subject = validate_subject_name(subject_name)
+
+        prompt = self._create_extraction_prompt(clean_syllabus, clean_subject)
         return self._call_gemini_with_schema(prompt, Syllabus)
     
     def _create_extraction_prompt(self, syllabus_text: str, subject_name: str) -> str:
