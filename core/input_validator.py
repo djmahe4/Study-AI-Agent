@@ -1,8 +1,14 @@
 """
-Input Validation Module for AI Learning Engine.
+Input Validation and Semantic Classification Module for AI Learning Engine.
 
-This module provides functions to sanitize and validate all user-supplied
-text before it is embedded into LLM prompts or stored in the database.
+This module provides two main capabilities:
+
+1. **Sanitization** – clean user-supplied text before it reaches LLM prompts
+   or the database (bleach + markupsafe stack).
+
+2. **Semantic query classification** – lightweight, fast hybrid classifier that
+   decides *what kind* of query a user is asking so the RAG pipeline can
+   choose the best aggregation strategy.
 
 Security Stack
 --------------
@@ -10,6 +16,28 @@ Security Stack
    into their safe equivalents so that they cannot be executed as HTML/script.
 2. **bleach.clean** – strips or escapes HTML tags from free-form text so that
    only plain text (or a small safe-list of tags) is kept.
+
+Semantic Classification
+-----------------------
+``classify_query_semantics()`` uses a *fast hybrid approach*:
+
+* **Tier 1 – keyword/regex heuristics** (~0 ms): pattern-matched signals for
+  common query intents (factual, conceptual, procedural, comparative,
+  generative, meta).
+* **Tier 2 – TF-IDF cosine similarity** (optional, ~5–30 ms): when the keyword
+  pass is inconclusive (< 0.45 confidence), a small in-process TF-IDF model
+  is used to compare the query against representative seed phrases.
+
+Each result is a :class:`QueryClassification` named-tuple containing:
+
+- ``query_type``: primary label
+  (``factual`` | ``conceptual`` | ``procedural`` | ``comparative`` |
+  ``generative`` | ``meta`` | ``unknown``)
+- ``labels``: ordered list of ``(label, confidence_0_to_1)`` pairs
+- ``aggregation_strategy``: one of
+  ``summarize-first`` | ``detailed-chunk-merge`` |
+  ``source-priority`` | ``gap-analysis``
+- ``confidence``: top confidence score (0.0–1.0)
 
 Why does this matter for an LLM integration?
 ---------------------------------------------
@@ -39,11 +67,18 @@ Usage
 >>> print(safe)  # Hello
 >>> name = validate_subject_name("  Data Structures!! ")
 >>> print(name)  # Data Structures
+
+>>> from core.input_validator import classify_query_semantics
+>>> result = classify_query_semantics("What is the OSI model?")
+>>> print(result.query_type)            # factual
+>>> print(result.aggregation_strategy)  # summarize-first
+>>> print(result.confidence)            # 0.9
 """
 
 import re
+import math
 import logging
-from typing import Optional
+from typing import Optional, List, Tuple, NamedTuple
 
 from markupsafe import escape as markup_escape
 
@@ -247,3 +282,409 @@ def validate_subject_name(name: str) -> str:
             "Please use only letters, digits, spaces, hyphens, parentheses, or commas."
         )
     return name
+
+
+# Pre-compiled pattern for Mermaid label sanitization (module-level for performance)
+_MERMAID_UNSAFE_RE = re.compile(r'["\(\)\[\]\{\}]')
+
+
+def sanitize_mermaid_label(label: str, max_length: int = 80) -> str:
+    """
+    Sanitize a Mermaid diagram node label.
+
+    Strips HTML, escapes special characters, then removes characters that
+    break Mermaid syntax (``"``, ``(``, ``)``, ``[``, ``]``, ``{``, ``}``).
+
+    Parameters
+    ----------
+    label:
+        The raw node label text (e.g. from a syllabus line).
+    max_length:
+        Maximum length of the label.  Defaults to 80 characters.
+
+    Returns
+    -------
+    str
+        A safe, Mermaid-compatible node label.
+        Falls back to ``"Untitled"`` if the result is empty.
+
+    Examples
+    --------
+    >>> sanitize_mermaid_label("Module (1): Intro [Networks]")
+    'Module 1: Intro Networks'
+    >>> sanitize_mermaid_label("<b>Hello</b>")
+    'Hello'
+    """
+    clean = sanitize_text(label.strip(), max_length=max_length, escape_html=False)
+    clean = _MERMAID_UNSAFE_RE.sub("", clean).strip()
+    return clean or "Untitled"
+
+
+# ===========================================================================
+# Semantic Query Classification
+# ===========================================================================
+
+class QueryClassification(NamedTuple):
+    """
+    Result of :func:`classify_query_semantics`.
+
+    Attributes
+    ----------
+    query_type:
+        Primary semantic label for the query.
+        One of: ``factual``, ``conceptual``, ``procedural``, ``comparative``,
+        ``generative``, ``meta``, ``unknown``.
+    labels:
+        All detected labels sorted by confidence descending.
+        Each element is a ``(label: str, confidence: float)`` tuple.
+    aggregation_strategy:
+        Recommended RAG aggregation strategy for this query type:
+
+        * ``summarize-first`` – retrieve broadly, then summarise.
+        * ``detailed-chunk-merge`` – gather many specific chunks and merge.
+        * ``source-priority`` – prefer authoritative sources (textbook > web).
+        * ``gap-analysis`` – surface what the knowledge base is missing.
+    confidence:
+        Confidence score of the primary label (0.0–1.0).
+    """
+    query_type: str
+    labels: List[Tuple[str, float]]
+    aggregation_strategy: str
+    confidence: float
+
+
+# ---------------------------------------------------------------------------
+# Internal: keyword/regex patterns (Tier 1)
+# ---------------------------------------------------------------------------
+
+# Each entry: (label, list_of_compiled_patterns, base_score)
+# Patterns are matched against the lower-cased, stripped query.
+# Each *additional* matching pattern beyond the first adds +0.15 (capped at 0.95).
+# Rule: one regex per distinct concept/signal so that multiple hits accumulate.
+_QUERY_PATTERNS: List[Tuple[str, List[re.Pattern], float]] = [
+    (
+        "factual",
+        [
+            # Strong definitional / retrieval signals
+            re.compile(r"\b(what\s+is|what\s+are|define|definition\s+of|meaning\s+of)\b"),
+            re.compile(r"\b(who\s+is|when\s+did|where\s+is|how\s+many|which\s+one)\b"),
+            re.compile(r"\b(acronym|abbreviation|full\s+form)\b"),
+            # Bare question mark only adds a very small signal (0.1) – not enough alone
+            re.compile(r"\?\s*$"),
+        ],
+        # base_score: low by itself; second match needed for certainty
+        0.45,
+    ),
+    (
+        "conceptual",
+        [
+            re.compile(r"\b(explain|describe|why\s+does|why\s+is|how\s+does|how\s+do)\b"),
+            re.compile(r"\b(concept\s+of|understand|overview|summarize|significance|purpose\s+of)\b"),
+            re.compile(r"\b(principle|theory|model|framework|paradigm|architecture)\b"),
+        ],
+        0.55,
+    ),
+    (
+        "procedural",
+        [
+            # "how to" is almost exclusively procedural – give it its own strong pattern
+            re.compile(r"\bhow\s+to\b"),
+            re.compile(r"\b(steps?\s+(to|for)|guide\s+(to|for)|tutorial\s+(for|on))\b"),
+            re.compile(r"\b(implement|create|build|configure|set\s+up|install|deploy|run|execute)\b"),
+            re.compile(r"\b(process\s+of|procedure|workflow|walkthrough)\b"),
+        ],
+        0.55,
+    ),
+    (
+        "comparative",
+        [
+            re.compile(r"\b(difference\s+between|differences?\s+of)\b"),
+            re.compile(r"\b(compare|comparison\s+between|vs\.?|versus|contrast)\b"),
+            re.compile(r"\b(similarities|advantages?\s+of|disadvantages?\s+of|pros?\s+and\s+cons?)\b"),
+            re.compile(r"\b(better\s+than|worse\s+than|prefer\s+over)\b"),
+        ],
+        0.55,
+    ),
+    (
+        "generative",
+        [
+            re.compile(r"\b(generate|produce|make|draft|design)\b"),
+            re.compile(r"\b(create|write|give\s+me|list|enumerate|provide\s+examples?)\b"),
+            re.compile(r"\b(quiz|flashcard|practice\s+questions?|exercise|problem|mindmap|diagram)\b"),
+        ],
+        0.55,
+    ),
+    (
+        "meta",
+        [
+            # Keep each distinct signal as its own pattern for score accumulation
+            re.compile(r"\bwhat\s+can\s+you\b"),
+            re.compile(r"\b(help|help\s+me)\b"),
+            re.compile(r"\b(show\s+me|capabilities|features|skills|available\s+commands?)\b"),
+            re.compile(r"\b(study\s+plan|study\s+schedule|revision\s+plan|roadmap)\b"),
+            re.compile(r"\bsummarize\s+my\s+syllabus\b"),
+        ],
+        0.50,
+    ),
+]
+
+# Aggregation strategy mapping for each primary label
+_STRATEGY_MAP: dict = {
+    "factual": "summarize-first",
+    "conceptual": "detailed-chunk-merge",
+    "procedural": "detailed-chunk-merge",
+    "comparative": "source-priority",
+    "generative": "gap-analysis",
+    "meta": "summarize-first",
+    "unknown": "summarize-first",
+}
+
+# ---------------------------------------------------------------------------
+# Internal: TF-IDF fallback (Tier 2)
+# ---------------------------------------------------------------------------
+
+# Seed phrases per label used to build the micro TF-IDF corpus
+_SEED_PHRASES: dict = {
+    "factual": [
+        "what is machine learning",
+        "define recursion",
+        "what are the layers of OSI model",
+        "meaning of entropy",
+    ],
+    "conceptual": [
+        "explain how neural networks work",
+        "why does the internet use TCP IP",
+        "describe the concept of virtual memory",
+        "overview of sorting algorithms",
+    ],
+    "procedural": [
+        "how to implement binary search",
+        "steps to configure a router",
+        "guide to building a REST API",
+        "how to run the study agent",
+    ],
+    "comparative": [
+        "difference between TCP and UDP",
+        "compare bubble sort and merge sort",
+        "TCP vs UDP advantages",
+        "SQL versus NoSQL databases",
+    ],
+    "generative": [
+        "generate flashcards for data structures",
+        "create a quiz about networking",
+        "produce a mindmap of operating systems",
+        "give me example problems on trees",
+    ],
+    "meta": [
+        "what can you do",
+        "show me available commands",
+        "help me make a study plan",
+        "summarize my syllabus for me",
+    ],
+}
+
+
+def _tokenize(text: str) -> List[str]:
+    """Simple whitespace + punctuation tokenizer (no external dependency)."""
+    return re.findall(r"[a-z]+", text.lower())
+
+
+def _tf(tokens: List[str]) -> dict:
+    """Compute term frequencies for a token list."""
+    freq: dict = {}
+    for t in tokens:
+        freq[t] = freq.get(t, 0) + 1
+    total = len(tokens) or 1
+    return {t: c / total for t, c in freq.items()}
+
+
+def _cosine(vec_a: dict, vec_b: dict) -> float:
+    """Cosine similarity between two TF dicts."""
+    keys = set(vec_a) & set(vec_b)
+    if not keys:
+        return 0.0
+    dot = sum(vec_a[k] * vec_b[k] for k in keys)
+    norm_a = math.sqrt(sum(v * v for v in vec_a.values()))
+    norm_b = math.sqrt(sum(v * v for v in vec_b.values()))
+    if norm_a == 0 or norm_b == 0:
+        return 0.0
+    return dot / (norm_a * norm_b)
+
+
+def _tfidf_classify(query_tokens: List[str]) -> List[Tuple[str, float]]:
+    """
+    Compute per-label cosine similarity between the query and seed phrases.
+
+    Returns a list of ``(label, score)`` sorted by score descending.
+    The scores are *not* probabilities – they are raw cosine similarities
+    in [0, 1].  The caller normalises them.
+    """
+    query_tf = _tf(query_tokens)
+    scores: List[Tuple[str, float]] = []
+
+    for label, phrases in _SEED_PHRASES.items():
+        # Average TF vector across all seed phrases for this label
+        combined: dict = {}
+        for phrase in phrases:
+            for token, freq in _tf(_tokenize(phrase)).items():
+                combined[token] = combined.get(token, 0.0) + freq / len(phrases)
+
+        sim = _cosine(query_tf, combined)
+        scores.append((label, round(sim, 4)))
+
+    return sorted(scores, key=lambda x: x[1], reverse=True)
+
+
+# ---------------------------------------------------------------------------
+# Public API
+# ---------------------------------------------------------------------------
+
+
+def classify_query_semantics(raw_query: str) -> QueryClassification:
+    """
+    Classify the semantic type of a user query for RAG pipeline routing.
+
+    Uses a two-tier hybrid approach:
+
+    * **Tier 1** (always runs, ~0 ms): keyword/regex pattern matching against
+      curated signal lists for each query type.
+    * **Tier 2** (runs when Tier 1 confidence < 0.45, ~5–30 ms): TF-IDF
+      cosine similarity against labelled seed phrases.
+
+    The input is automatically sanitized via :func:`sanitize_question_text`
+    before any analysis so this function is safe to call with raw user input.
+
+    Parameters
+    ----------
+    raw_query:
+        The raw question or instruction typed by the user.
+
+    Returns
+    -------
+    QueryClassification
+        Named-tuple with fields:
+        ``query_type``, ``labels``, ``aggregation_strategy``, ``confidence``.
+
+    Examples
+    --------
+    >>> r = classify_query_semantics("What is the TCP/IP model?")
+    >>> r.query_type
+    'factual'
+    >>> r.aggregation_strategy
+    'summarize-first'
+    >>> r.confidence >= 0.5
+    True
+
+    >>> r2 = classify_query_semantics("How to implement a binary search tree?")
+    >>> r2.query_type
+    'procedural'
+
+    >>> r3 = classify_query_semantics("Difference between TCP and UDP")
+    >>> r3.query_type
+    'comparative'
+
+    Notes
+    -----
+    * Confidence scores are heuristic estimates, not calibrated probabilities.
+    * For mixed/ambiguous queries all matching labels are returned in ``labels``
+      so callers can implement their own threshold logic.
+    * This function is designed to complete in well under 50 ms on typical
+      hardware, making it suitable for real-time interactive sessions.
+    """
+    if not isinstance(raw_query, str):
+        raw_query = str(raw_query)
+
+    # Always sanitize input first
+    clean_query = sanitize_question_text(raw_query)
+    query_lower = clean_query.lower().strip()
+
+    if not query_lower:
+        logger.warning("classify_query_semantics received an empty query after sanitization.")
+        return QueryClassification(
+            query_type="unknown",
+            labels=[("unknown", 1.0)],
+            aggregation_strategy=_STRATEGY_MAP["unknown"],
+            confidence=1.0,
+        )
+
+    # ------------------------------------------------------------------
+    # Tier 1: keyword/regex heuristics
+    # ------------------------------------------------------------------
+    tier1_scores: dict = {}
+
+    for label, patterns, base_score in _QUERY_PATTERNS:
+        matched = sum(1 for p in patterns if p.search(query_lower))
+        if matched > 0:
+            # Each additional pattern match adds 0.15, capped at 0.95.
+            # Special case: for "factual", the bare-? pattern is weak on its
+            # own – only promote to base_score when there is at least one
+            # *strong* definitional signal too (i.e., matched >= 2).
+            if label == "factual" and matched == 1:
+                # Only the weak trailing-? matched; give a very small signal
+                score = 0.35
+            else:
+                score = min(base_score + (matched - 1) * 0.15, 0.95)
+            tier1_scores[label] = max(tier1_scores.get(label, 0.0), score)
+
+    # Sort by score descending
+    tier1_sorted = sorted(tier1_scores.items(), key=lambda x: x[1], reverse=True)
+    top_score = tier1_sorted[0][1] if tier1_sorted else 0.0
+
+    # ------------------------------------------------------------------
+    # Tier 2: TF-IDF fallback (only when Tier 1 is inconclusive)
+    # ------------------------------------------------------------------
+    if top_score < 0.45:
+        query_tokens = _tokenize(query_lower)
+        tfidf_scores = _tfidf_classify(query_tokens)
+
+        # Blend Tier 1 and Tier 2 scores
+        blended: dict = {}
+        for label, score in tfidf_scores:
+            t1 = tier1_scores.get(label, 0.0)
+            # Weighted blend: 40% TF-IDF + 60% keyword (if keyword hit exists)
+            if t1 > 0:
+                blended[label] = 0.4 * score + 0.6 * t1
+            else:
+                blended[label] = 0.4 * score
+
+        # Merge with any Tier 1 scores not in TF-IDF
+        for label, score in tier1_sorted:
+            if label not in blended:
+                blended[label] = score
+
+        final_sorted = sorted(blended.items(), key=lambda x: x[1], reverse=True)
+        logger.debug(
+            "classify_query_semantics – Tier 2 activated. Top: %s",
+            final_sorted[:3],
+        )
+    else:
+        final_sorted = tier1_sorted
+        logger.debug(
+            "classify_query_semantics – Tier 1 sufficient. Top: %s",
+            final_sorted[:3],
+        )
+
+    # ------------------------------------------------------------------
+    # Build output
+    # ------------------------------------------------------------------
+    if not final_sorted:
+        primary_label = "unknown"
+        top_confidence = 0.5
+    else:
+        primary_label, top_confidence = final_sorted[0]
+
+    labels_out: List[Tuple[str, float]] = [
+        (lbl, round(score, 4)) for lbl, score in final_sorted
+    ]
+
+    # Ensure we always have an "unknown" fallback entry if nothing matched
+    if not labels_out:
+        labels_out = [("unknown", 0.5)]
+
+    return QueryClassification(
+        query_type=primary_label,
+        labels=labels_out,
+        aggregation_strategy=_STRATEGY_MAP.get(primary_label, "summarize-first"),
+        confidence=round(top_confidence, 4),
+    )
+

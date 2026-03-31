@@ -19,12 +19,8 @@ from google.genai import types
 import google.genai
 from pydantic import BaseModel as PydanticModel
 
-# Configure logging (single call; avoid duplicate handlers)
-logging.basicConfig(
-    filename="gemini_processor.log",
-    level=logging.INFO,
-    format="%(asctime)s %(levelname)s %(name)s: %(message)s",
-)
+# Module-level logger – configuration is the responsibility of the application
+# entry point (cli.py / streamlit/app.py), not this library module.
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path("data/cache/gemini")

@@ -46,7 +46,13 @@ def ocr_page(page):
     for i, text in enumerate(data["text"]):
         if text.strip():
             try:
-                if i + 2 < len(data["text"]) and data["text"][i + 1] == "" and data["text"][i + 2] == "":
+                # Explicit bounds checks for both i+1 and i+2 before accessing
+                if (
+                    i + 1 < len(data["text"])
+                    and i + 2 < len(data["text"])
+                    and data["text"][i + 1] == ""
+                    and data["text"][i + 2] == ""
+                ):
                     for j in range(10):
                         # Bounds-check BEFORE accessing the element
                         if i + j >= len(data["text"]):
@@ -80,16 +86,8 @@ def ocr_page(page):
         if new_hight[i] != new_hight[i + 1]:
             no_dup.append(new_hight[i])
     # Always include the last element (if the list is non-empty)
-    # Return raw tokens for semantic search integrity
-    return ocr_lines, [w for w in new_hight if len(w) > 1]
-    # De-duplicate consecutive identical tokens
-    no_dup = []
-    for i in range(len(new_hight) - 1):
-        if new_hight[i] != new_hight[i + 1]:
-            no_dup.append(new_hight[i])
-    # The original code implicitly dropped the last element if it was a duplicate
-    # or simply didn't process it due to the IndexError. To match that:
-    # (no additional append here)
+    if new_hight:
+        no_dup.append(new_hight[-1])
     del new_hight
     new_hight = no_dup
     ic(new_hight)
