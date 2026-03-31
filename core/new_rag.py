@@ -80,7 +80,8 @@ def ocr_page(page):
         if new_hight[i] != new_hight[i + 1]:
             no_dup.append(new_hight[i])
     # Always include the last element (if the list is non-empty)
-    del new_hight
+    # Return raw tokens for semantic search integrity
+    return ocr_lines, [w for w in new_hight if len(w) > 1]
     # De-duplicate consecutive identical tokens
     no_dup = []
     for i in range(len(new_hight) - 1):
