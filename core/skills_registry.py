@@ -161,8 +161,10 @@ def _parse_yaml_frontmatter(text: str) -> Dict[str, Any]:
             inner = raw_value[1:-1]
             result[key] = [item.strip().strip('"').strip("'") for item in inner.split(",") if item.strip()]
         # Numeric
-        elif re.match(r"^[\d.]+$", raw_value):
-            result[key] = float(raw_value) if "." in raw_value else int(raw_value)
+        elif re.match(r"^\d+$", raw_value):
+            result[key] = int(raw_value)
+        elif re.match(r"^\d+\.\d+$", raw_value):
+            result[key] = float(raw_value)
         else:
             result[key] = raw_value.strip('"').strip("'")
 
