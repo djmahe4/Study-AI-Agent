@@ -17,6 +17,15 @@ from .flashcards import FlashcardManager
 from .cheatsheet import CheatsheetGenerator
 from .practice import PracticeGenerator
 from .notes_manager import NotesManager
+from .input_validator import (
+    sanitize_text,
+    sanitize_syllabus_text,
+    sanitize_question_text,
+    sanitize_mermaid_label,
+    validate_subject_name,
+    classify_query_semantics,
+    QueryClassification,
+)
 
 __all__ = [
     'Topic',
@@ -36,5 +45,14 @@ __all__ = [
     'get_example_difference',
     'RAGEngine',
     'normalize_subject_name',
-    'get_subject_dir'
+    'get_subject_dir',
+    # Input validation helpers
+    'sanitize_text',
+    'sanitize_syllabus_text',
+    'sanitize_question_text',
+    'sanitize_mermaid_label',
+    'validate_subject_name',
+    # Semantic classification
+    'classify_query_semantics',
+    'QueryClassification',
 ]
