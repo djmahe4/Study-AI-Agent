@@ -428,6 +428,8 @@ _QUERY_PATTERNS: List[Tuple[str, List[re.Pattern], float]] = [
     ),
 ]
 
+_FACTUAL_WEAK_QM_IDX = 3  # Index of bare-? pattern in _QUERY_PATTERNS[0][1]
+
 # Aggregation strategy mapping for each primary label
 _STRATEGY_MAP: dict = {
     "factual": "summarize-first",
@@ -620,7 +622,6 @@ def classify_query_semantics(raw_query: str) -> QueryClassification:
     # ------------------------------------------------------------------
     tier1_scores: dict = {}
 
-    WEAK_QM_IDX = 3  # Index of bare-? pattern in _QUERY_PATTERNS["factual"]
     for label, patterns, base_score in _QUERY_PATTERNS:
         # Check specific pattern matches to implement heuristics
         matches = [p.search(query_lower) for p in patterns]
@@ -632,7 +633,11 @@ def classify_query_semantics(raw_query: str) -> QueryClassification:
             # Special case: for "factual", the bare-? pattern (index 3) is weak on its
             # own – only promote to base_score when there is at least one
             # *strong* definitional signal too (i.e., matched_count >= 2).
-            if label == "factual" and matched_count == 1 and matched_indices[0] == WEAK_QM_IDX:
+            if (
+                label == "factual"
+                and matched_count == 1
+                and matched_indices[0] == _FACTUAL_WEAK_QM_IDX
+            ):
                 # Only the weak trailing-? matched; give a very small signal
                 score = 0.35
             else:
