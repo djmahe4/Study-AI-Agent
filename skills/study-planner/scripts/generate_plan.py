@@ -109,7 +109,7 @@ def main() -> None:
         try:
             days = int(sys.argv[idx + 1])
         except (IndexError, ValueError):
-            pass
+            print("Warning: invalid or missing value for --days; using default of 30 days.", file=sys.stderr)
 
     raw = Path(syllabus_file).read_text(encoding="utf-8")
     clean = sanitize_syllabus_text(raw)
