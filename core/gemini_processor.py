@@ -16,8 +16,11 @@ from .utils import normalize_subject_name, get_subject_dir
 from .input_validator import sanitize_syllabus_text, validate_subject_name
 from google import genai
 from google.genai import types
-import google.genai
 from pydantic import BaseModel as PydanticModel
+from google.genai.errors import APIError
+import tenacity
+from tenacity import retry_if_exception, wait_exponential, stop_after_attempt, wait_fixed
+from dotenv import load_dotenv
 
 # Module-level logger – configuration is the responsibility of the application
 # entry point (cli.py / streamlit/app.py), not this library module.
@@ -25,6 +28,7 @@ logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path("data/cache/gemini")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+load_dotenv()
 
 class SimpleGeminiCache:
     """
@@ -81,7 +85,7 @@ class GeminiProcessor:
             self.client = client
         else:
             # Assumes GEMINI_API_KEY or GOOGLE_API_KEY is set in environment
-            self.client = genai.Client()
+            self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
             
         self.model_name = model_name
         self.cache = SimpleGeminiCache()
@@ -147,33 +151,64 @@ Return the result as a valid JSON object matching the following structure:
 }}
 """
 
+    def _extract_retry_delay(self, error: Exception) -> Optional[float]:
+        """Extract retryDelay from Gemini API error message."""
+        try:
+            import re
+            # Look for "retryDelay": "28.9s"
+            match = re.search(r'"retryDelay":\s*"([\d\.]+)s"', str(error))
+            if match:
+                return float(match.group(1))
+        except Exception:
+            pass
+        return None
+
+    def _wait_strategy(self, retry_state: tenacity.RetryCallState) -> float:
+        """Custom wait strategy: use API suggested delay or exponential backoff."""
+        if retry_state.outcome and retry_state.outcome.failed:
+            error = retry_state.outcome.exception()
+            delay = self._extract_retry_delay(error)
+            if delay:
+                logger.info(f"Rate limit hit! Respecting API suggested delay: {delay}s")
+                return delay
+        
+        # Fallback to exponential backoff
+        return wait_exponential(multiplier=2, min=5, max=60)(retry_state)
+
     def _call_gemini_with_schema(self, prompt: str, schema_cls: Any) -> Any:
         """
         Call Gemini model and parse the response into a Pydantic model.
-        Uses local caching to reduce calls.
+        Uses local caching to reduce calls and tenacity for robust retries.
         """
         # 1. Check Cache
         cached_text = self.cache.get(prompt, self.model_name)
         if cached_text:
              response_text = cached_text
         else:
-            # 2. Call API
+            # 2. Call API with retries
             try:
-                # Using the new SDK's generate_content method
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        #tools=[types.Tool(google_search=types.GoogleSearch())],
+                # We use a functional retry to handle dynamic waits better
+                for attempt in tenacity.Retrying(
+                    retry=retry_if_exception(lambda e: isinstance(e, APIError) and "429" in str(e)),
+                    wait=self._wait_strategy,
+                    stop=stop_after_attempt(5),
+                    reraise=True
+                ):
+                    with attempt:
+                        # Using the new SDK's generate_content method
+                        response = self.client.models.generate_content(
+                            model=self.model_name,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                            )
                         )
-                )
-                response_text = response.text
+                        response_text = response.text
+                
                 # 3. Save to Cache
                 self.cache.set(prompt, self.model_name, response_text)
             except Exception as e:
-                logger.error(f"Gemini API call failed: {e}")
-                # Fallback or re-raise. For now, re-raise to be handled by caller
+                logger.error(f"Gemini API call failed after retries: {e}")
                 raise e
 
         # 4. Parse Response

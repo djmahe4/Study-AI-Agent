@@ -7,6 +7,7 @@ from icecream import ic
 import typer
 import sys
 import platform
+from datetime import datetime
 import json
 import time
 import shlex
@@ -20,6 +21,9 @@ import os
 import google.genai as genai
 import subprocess
 from pydantic import ValidationError
+
+# Load environment variables early
+load_dotenv()
 
 from core import (
     Topic, Syllabus, Question, Subject, KnowledgeBase,
@@ -513,6 +517,58 @@ def get_pyq_answers(
         console.print(f"[green]Saved solutions to {output_file}[/green]")
 
 @app.command()
+def generate_skills(
+    subject: Optional[str] = typer.Option(None, help="Subject name to generate skills for"),
+    module: Optional[str] = typer.Option(None, help="Specific module to target"),
+):
+    """
+    Transform subject notes and PYQ solutions into structured Agent Skills.
+    """
+    current_subject = subject or _get_current_subject()
+    if not current_subject:
+        console.print("[red]No subject selected. Please select a subject or provide --subject.[/red]")
+        return
+        
+    # Get available modules
+    from core.utils import get_subject_dir
+    notes_dir = get_subject_dir(current_subject) / "notes"
+    
+    selected_module = module
+    if not selected_module and notes_dir.exists():
+        modules = [d.name for d in notes_dir.iterdir() if d.is_dir()]
+        if modules:
+            console.print(f"\n[bold cyan]Available modules for {current_subject}:[/bold cyan]")
+            for i, mod in enumerate(modules, 1):
+                console.print(f"  {i}. {mod}")
+            console.print(f"  {len(modules) + 1}. [All Modules]")
+            
+            choice = typer.prompt("\nSelect a module number to scaffold skills (or 0 to cancel)", type=int, default=len(modules) + 1)
+            if choice == 0:
+                return
+            if choice <= len(modules):
+                selected_module = modules[choice - 1]
+            else:
+                selected_module = None # Process all
+        
+    msg = f"[START] Initializing Skill Factory for: {current_subject}"
+    if selected_module:
+        msg += f" (Module: {selected_module})"
+    else:
+        msg += " (All Modules)"
+        
+    console.print(f"[cyan]{msg}[/cyan]")
+    console.print("[yellow]Analyzing notes and solutions to scaffold skills. This involves LLM processing...[/yellow]")
+    
+    from core.skill_generator import generate_skills_for_subject
+    
+    with console.status("[bold blue]Generating skills..."):
+        generate_skills_for_subject(current_subject, selected_module)
+        
+    console.print(f"[bold green]✓ Skill Factory complete for {current_subject}![/bold green]")
+    console.print(f"[dim]New skills are available in the 'skills/' directory.[/dim]")
+
+
+@app.command()
 def help():
     """Show aesthetic help and workflow information."""
     from rich.panel import Panel
@@ -533,7 +589,7 @@ def help():
         "[bold yellow]2. Create:[/bold yellow]     [green]create-subject[/green] (AI extracts modules, topics & creates markdown notes)",
         "[bold yellow]3. Prioritize:[/bold yellow] [green]ingest-paper[/green] (Analyze importance from previous year papers)",
         "[bold yellow]4. Study:[/bold yellow]      [green]save-notes[/green] (Generate MD) -> Review in [dim]data/subjects/<subj>/notes[/dim]",
-        "[bold yellow]5. Deepen:[/bold yellow]     [green]ask-youtube[/green], [green]quiz-youtube[/green], [green]create-mnemonic[/green]",
+        "[bold yellow]5. Deepen:[/bold yellow]     [green]get-pyq-answers[/green] (Answer PYQs) -> [green]generate-skills[/green] (Build Agent Skills)",
         "[bold yellow]6. Visualize:[/bold yellow]  [green]generate-mindmap-v2[/green] (Mermaid), [green]run-web[/green] (Explorer)"
     ]
     
@@ -553,7 +609,7 @@ def help():
     table.add_row("📁 Subjects", "create-subject, list-subjects, select-subject, delete-subject")
     table.add_row("📝 Content", "configure-exam, save-notes, add-topic, list-topics, load-syllabus, export-syllabus")
     table.add_row("📺 YouTube", "ask-youtube, quiz-youtube")
-    table.add_row("🧠 Study", "add-question, list-questions, create-mnemonic, show-difference, ingest-paper, get-pyq-answers")
+    table.add_row("🧠 Study", "add-question, list-questions, create-mnemonic, show-difference, ingest-paper, get-pyq-answers, generate-skills")
     table.add_row("🎨 Visuals", "generate-mindmap, generate-mindmap-v2, create-animation")
     table.add_row("🎮 Gamification", "pomodoro, progress")
     table.add_row("✅ Tasks", "todo-add, todo-list, todo-complete")
