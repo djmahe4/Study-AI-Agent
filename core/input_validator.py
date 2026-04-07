@@ -78,7 +78,7 @@ Usage
 import re
 import math
 import logging
-from typing import Optional, List, Tuple, NamedTuple
+from typing import Optional, List, Tuple, NamedTuple, Dict
 
 from markupsafe import escape as markup_escape
 
@@ -484,6 +484,7 @@ _SEED_PHRASES: dict = {
 }
 
 
+
 def _tokenize(text: str) -> List[str]:
     """Simple whitespace + punctuation tokenizer (no external dependency)."""
     return re.findall(r"[a-z]+", text.lower())
@@ -496,6 +497,19 @@ def _tf(tokens: List[str]) -> dict:
         freq[t] = freq.get(t, 0) + 1
     total = len(tokens) or 1
     return {t: c / total for t, c in freq.items()}
+
+
+# Pre-calculate seed phrase vectors once at module load to avoid redundant work in Tier 2
+_SEED_PHRASE_VECTORS: Dict[str, Dict[str, float]] = {}
+for _label, _phrases in _SEED_PHRASES.items():
+    _combined: Dict[str, float] = {}
+    _denominator = len(_phrases) or 1
+    for _phrase in _phrases:
+        _tokens = _tokenize(_phrase)
+        _tf_map = _tf(_tokens)
+        for _token, _freq in _tf_map.items():
+            _combined[_token] = _combined.get(_token, 0.0) + (_freq / _denominator)
+    _SEED_PHRASE_VECTORS[_label] = _combined
 
 
 def _cosine(vec_a: dict, vec_b: dict) -> float:
@@ -522,14 +536,8 @@ def _tfidf_classify(query_tokens: List[str]) -> List[Tuple[str, float]]:
     query_tf = _tf(query_tokens)
     scores: List[Tuple[str, float]] = []
 
-    for label, phrases in _SEED_PHRASES.items():
-        # Average TF vector across all seed phrases for this label
-        combined: dict = {}
-        for phrase in phrases:
-            for token, freq in _tf(_tokenize(phrase)).items():
-                combined[token] = combined.get(token, 0.0) + freq / len(phrases)
-
-        sim = _cosine(query_tf, combined)
+    for label, combined_vector in _SEED_PHRASE_VECTORS.items():
+        sim = _cosine(query_tf, combined_vector)
         scores.append((label, round(sim, 4)))
 
     return sorted(scores, key=lambda x: x[1], reverse=True)
@@ -612,18 +620,23 @@ def classify_query_semantics(raw_query: str) -> QueryClassification:
     # ------------------------------------------------------------------
     tier1_scores: dict = {}
 
+    WEAK_QM_IDX = 3  # Index of bare-? pattern in _QUERY_PATTERNS["factual"]
     for label, patterns, base_score in _QUERY_PATTERNS:
-        matched = sum(1 for p in patterns if p.search(query_lower))
-        if matched > 0:
+        # Check specific pattern matches to implement heuristics
+        matches = [p.search(query_lower) for p in patterns]
+        matched_indices = [idx for idx, m in enumerate(matches) if m]
+        matched_count = len(matched_indices)
+
+        if matched_count > 0:
             # Each additional pattern match adds 0.15, capped at 0.95.
-            # Special case: for "factual", the bare-? pattern is weak on its
+            # Special case: for "factual", the bare-? pattern (index 3) is weak on its
             # own – only promote to base_score when there is at least one
-            # *strong* definitional signal too (i.e., matched >= 2).
-            if label == "factual" and matched == 1:
+            # *strong* definitional signal too (i.e., matched_count >= 2).
+            if label == "factual" and matched_count == 1 and matched_indices[0] == WEAK_QM_IDX:
                 # Only the weak trailing-? matched; give a very small signal
                 score = 0.35
             else:
-                score = min(base_score + (matched - 1) * 0.15, 0.95)
+                score = min(base_score + (matched_count - 1) * 0.15, 0.95)
             tier1_scores[label] = max(tier1_scores.get(label, 0.0), score)
 
     # Sort by score descending

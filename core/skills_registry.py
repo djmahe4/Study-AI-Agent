@@ -41,6 +41,7 @@ All user-supplied inputs to ``invoke_skill`` are sanitized via
 """
 
 import re
+import yaml
 import logging
 from pathlib import Path
 from typing import Any, Dict, List, Optional
@@ -127,48 +128,27 @@ class SkillMetadata:
 
 def _parse_yaml_frontmatter(text: str) -> Dict[str, Any]:
     """
-    Parse a minimal YAML front-matter block without requiring PyYAML.
-
-    Supports: string scalars, lists (``[a, b]`` or multi-line ``- item``),
-    and numeric scalars.  Does *not* support nested mappings.
+    Parse a minimal YAML front-matter block using PyYAML.
 
     Parameters
     ----------
     text:
-        The raw content of the front-matter block (between the ``---`` delimiters,
-        not including the delimiters themselves).
+        The raw content of the front-matter block (between the --- delimiters).
 
     Returns
     -------
     dict
         Parsed key-value pairs.
     """
-    result: Dict[str, Any] = {}
-
-    for line in text.splitlines():
-        line = line.strip()
-        if not line or line.startswith("#"):
-            continue
-        if ":" not in line:
-            continue
-
-        key, _, raw_value = line.partition(":")
-        key = key.strip()
-        raw_value = raw_value.strip()
-
-        # Inline list: [a, b, c]
-        if raw_value.startswith("[") and raw_value.endswith("]"):
-            inner = raw_value[1:-1]
-            result[key] = [item.strip().strip('"').strip("'") for item in inner.split(",") if item.strip()]
-        # Numeric
-        elif re.match(r"^\d+$", raw_value):
-            result[key] = int(raw_value)
-        elif re.match(r"^\d+\.\d+$", raw_value):
-            result[key] = float(raw_value)
-        else:
-            result[key] = raw_value.strip('"').strip("'")
-
-    return result
+    try:
+        data = yaml.safe_load(text)
+        if isinstance(data, dict):
+            # Normalization: ensure all keys are lower-case for registry lookups
+            return {k.lower(): v for k, v in data.items()}
+        return {}
+    except yaml.YAMLError as e:
+        logger.error(f"Failed to parse skill YAML front-matter: {e}")
+        return {}
 
 
 def _load_skill(skill_dir: Path) -> Optional[SkillMetadata]:
