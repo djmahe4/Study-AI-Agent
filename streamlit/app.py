@@ -76,7 +76,7 @@ def main():
     # 1. Select Section
     nav_section = st.sidebar.radio(
         "Section",
-        ["📖 Learning", "🎮 Gamification", "⚙️ Admin"],
+        ["📖 Learning", "🎮 Gamification", "🤖 AI", "⚙️ Admin"],
         horizontal=True,
         label_visibility="collapsed"
     )
@@ -87,6 +87,7 @@ def main():
     sections = {
         "📖 Learning": ["📚 Topics", "🗺️ Mind Map", "📝 Question Bank", "❓ Quiz Mode", "🎬 Animations", "📊 Differences"],
         "🎮 Gamification": ["🏆 My Progress", "🍅 Pomodoro", "✅ Tasks", "🎴 Flashcards"],
+        "🤖 AI": ["💬 AI Chat"],
         "⚙️ Admin": ["➕ Add Content", "⚙️ Settings"]
     }
     
@@ -128,6 +129,8 @@ def main():
         show_add_content_page()
     elif page == "⚙️ Settings":
         show_settings_page()
+    elif page == "💬 AI Chat":
+        show_ai_chat_page()
 
 
 def get_current_subject():
@@ -786,6 +789,75 @@ def show_add_content_page():
                     st.success("Question added successfully!")
                 else:
                     st.error("Please fill in all required fields (*)")
+
+
+def show_ai_chat_page():
+    st.header("💬 AI Study Companion")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("Your multi-agentic tutor, powered by Ollama and custom learning skills.")
+    with col2:
+        use_frontier = st.toggle("🚀 Frontier AI", value=False, help="Enhance responses with educational insights and deeper reasoning via Free-LLMs.")
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    
+    # Session ID for persistence (link to current subject if available)
+    subject = get_current_subject() or "default"
+    session_id = f"st_session_{subject}"
+
+    # Display chat history
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat input
+    if prompt := st.chat_input("Ask me anything about your studies..."):
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+
+        # Placeholder for assistant response
+        with st.chat_message("assistant"):
+            status_container = st.empty()
+            response_container = st.empty()
+            full_response = ""
+
+            # Call backend
+            try:
+                import requests
+                import json
+                
+                # Check for backend server
+                endpoint = "chat/external" if use_frontier else "chat"
+                server_url = f"http://localhost:8765/{endpoint}"
+                
+                with requests.post(
+                    server_url, 
+                    json={"message": prompt, "session_id": session_id}, 
+                    stream=True,
+                    timeout=120
+                ) as r:
+                    for line in r.iter_lines():
+                        if line:
+                            data = json.loads(line.decode('utf-8'))
+                            
+                            if data["type"] == "status":
+                                status_container.info(f"Agent: {data['skill']} - {data['message']}")
+                            elif data["type"] == "content":
+                                full_response += data["content"]
+                                response_container.markdown(full_response + "▌")
+                            elif data["type"] == "done":
+                                response_container.markdown(full_response)
+                                
+                st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
+            except Exception as e:
+                st.error(f"Failed to connect to AI server: {e}")
+                st.info("Make sure the MCP server is running at http://localhost:8765")
 
 
 if __name__ == "__main__":
