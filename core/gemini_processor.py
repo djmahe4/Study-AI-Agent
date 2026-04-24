@@ -189,7 +189,7 @@ Return the result as a valid JSON object matching the following structure:
             try:
                 # We use a functional retry to handle dynamic waits better
                 for attempt in tenacity.Retrying(
-                    retry=retry_if_exception(lambda e: isinstance(e, APIError) and "429" in str(e)),
+                    retry=retry_if_exception(lambda e: isinstance(e, APIError) and ("429" in str(e) or "503" in str(e))),
                     wait=self._wait_strategy,
                     stop=stop_after_attempt(5),
                     reraise=True

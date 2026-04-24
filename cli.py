@@ -562,10 +562,22 @@ def generate_skills(
     from core.skill_generator import generate_skills_for_subject
     
     with console.status("[bold blue]Generating skills..."):
-        generate_skills_for_subject(current_subject, selected_module)
+        stats = generate_skills_for_subject(current_subject, selected_module)
         
-    console.print(f"[bold green]✓ Skill Factory complete for {current_subject}![/bold green]")
-    console.print(f"[dim]New skills are available in the 'skills/' directory.[/dim]")
+    console.print(f"\n[bold green]✓ Skill Factory complete for {current_subject}![/bold green]")
+    
+    # Display Summary Table
+    table = Table(title="Generation Summary", box=None, header_style="bold magenta")
+    table.add_column("Category", style="cyan")
+    table.add_column("Count", style="white", justify="right")
+    
+    table.add_row("Total Files Found", str(stats.get("total", 0)))
+    table.add_row("New Skills Created", f"[green]{stats.get('created', 0)}[/green]")
+    table.add_row("Cache Hits", f"[blue]{stats.get('cache_hits', 0)}[/blue]")
+    table.add_row("Failed", f"[red]{stats.get('failed', 0)}[/red]")
+    
+    console.print(table)
+    console.print(f"\n[dim]New skills are available in the 'skills/{current_subject.lower().replace(' ', '_')}' directory.[/dim]")
 
 
 @app.command()
@@ -776,7 +788,7 @@ def save_notes(output_file: Optional[str] = None):
         syllabus = load_syllabus_from_json(syllabus_path)
         
         if not output_file:
-            output_file = f"{subject_data['folder_path']}/notes.md"
+            output_file = f"{subject_data['folder_path']}/notes"
             
         save_syllabus_to_markdown(syllabus, output_file)
         console.print(f"[bold green]Notes saved to: {output_file}[/bold green]")

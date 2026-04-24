@@ -26,5 +26,19 @@
     "syllabus_path": "data\\subjects\\compiler_design/syllabus/syllabus.json",
     "question_bank_path": null,
     "created_at": "2026-03-08 13:13:54.140982"
+  },
+  {
+    "name": "Algorithm Analysis and Design",
+    "folder_path": "data\\subjects\\algorithm_analysis_and_design",
+    "syllabus_path": "data\\subjects\\algorithm_analysis_and_design/syllabus/syllabus.json",
+    "question_bank_path": null,
+    "created_at": "2026-04-13 09:39:23.156748"
+  },
+  {
+    "name": "IOT",
+    "folder_path": "data\\subjects\\iot",
+    "syllabus_path": "data\\subjects\\iot/syllabus/syllabus.json",
+    "question_bank_path": null,
+    "created_at": "2026-04-24 11:28:40.778402"
   }
 ]

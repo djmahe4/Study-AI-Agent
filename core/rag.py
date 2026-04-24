@@ -170,24 +170,30 @@ def create_main_chain(fpath):
     chunks = splitter.create_documents([transcript])
     print(f"Number of chunks created: {len(chunks)}")
 
-    # 2. Initialize Embeddings and Vector Store with Google Generative AI
-    # Note: Requires google-generativeai to be installed or compatible shim
+    # 2. Initialize Embeddings and Vector Store
+    # We prioritize local HuggingFace embeddings for performance and reliability
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    except Exception as e:
-        logger.warning(f"Google Generative AI Embeddings not available: {e}. Falling back to HuggingFace embeddings.")
-        # Choose one of the recommended models
         embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-small-en-v1.5"  # Or "sentence-transformers/all-mpnet-base-v2"
-            # Optional parameters:
-            # model_kwargs={"device": "cpu"},  # Use "cuda" if GPU is available for faster computation
-            # encode_kwargs={"normalize_embeddings": True}
+            model_name="BAAI/bge-small-en-v1.5",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True}
         )
+        print("[*] Using local HuggingFace embeddings.")
+    except Exception as e:
+        logger.warning(f"HuggingFace embeddings failed: {e}. Falling back to Google Generative AI.")
+        try:
+            # Fallback to Gemini embedding model
+            embeddings = GoogleGenerativeAIEmbeddings(model="models/text-embedding-004")
+            print("[*] Using Google Generative AI embeddings.")
+        except Exception as e2:
+            logger.error(f"All embedding models failed: {e2}")
+            return None
+
     vector_store = FAISS.from_documents(chunks, embeddings)
     base_retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
     # 3. Initialize Chat Model with Gemini 2.5 Flash
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=1.0)
+    llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=1.0)
 
     # --- Context Window Optimization Implementation ---
     # 4. Create a compressor for the retrieved documents
@@ -286,54 +292,66 @@ class YouTubeSearcher:
         #     # Initialize lazily or on demand
         #     pass
 
-    def _wait_for_subs(self, page, timeout=10) -> Optional[str]:
+    def _wait_for_subs(self, page, timeout=15) -> Optional[str]:
         """
         Internal method to listen for subtitle API responses.
         """
-        print("Waiting for network requests...")
-        time.sleep(timeout) # Wait for video to load and subs to fetch
-        found=False
+        print("[*] Waiting for network requests (timedtext)...")
+        found = False
         
         # Filter and display subtitle API responses
         max_retries = 3
         retries = 0
         
         while not found and retries < max_retries:
-            print("!! Click 'CC' button manually to extract subtitles (if running interactively)")
-            for step in page.listen.steps():
-                if hasattr(step, 'response') and step.response:
-                    url = step.response.url
-                    try:
-                        content_type = step.response.headers.get('Content-Type', '')
-                    except:
-                        continue
-                        
-                    if 'api' in url.lower() and 'timedtext' in url.lower() and 'json' in content_type:
-                        print(f"API URL: {url}")
-                        try:
-                            body = step.response.body
-                            json_string = json.dumps(body, indent=2, ensure_ascii=False)
-                            tit = page.title.replace(" ","_")
-                            # Sanitize filename
-                            tit = "".join([c for c in tit if c.isalpha() or c.isdigit() or c=='_']).rstrip()
-                            filename = f"{tit}.json"
-                            
-                            with open(filename, 'w', encoding='utf-8') as f:
-                                f.write(json_string)
+            # Try to trigger CC if not found yet
+            if retries > 0:
+                print(f"[*] Retry {retries}: Attempting to toggle CC again...")
+                try:
+                    video = page.ele('tag:video', timeout=2)
+                    if video:
+                        video.click()
+                        page.actions.type('c')
+                except:
+                    pass
 
-                            print(f"✅ JSON saved to {filename}")
-                            page.stop_loading()
-                            return filename
-                        except Exception as e:
-                            print("❌ Failed to save JSON:", e)
+            # Wait for the listener to catch something
+            # page.listen.wait() waits for the next target request
+            res = page.listen.wait(timeout=5)
+            if res:
+                url = res.url
+                try:
+                    content_type = res.headers.get('Content-Type', '')
+                except:
+                    content_type = ''
+                    
+                if 'timedtext' in url.lower():
+                    print(f"[+] Found Subtitle API URL: {url}")
+                    try:
+                        if not res.response or not res.response.body:
+                            print("[!] Empty response body, skipping...")
+                            continue
+                            
+                        body = res.response.body
+                        json_string = json.dumps(body, indent=2, ensure_ascii=False)
+                        tit = page.title.replace(" ","_")
+                        # Sanitize filename
+                        tit = "".join([c for c in tit if c.isalnum() or c=='_']).rstrip()
+                        if not tit: tit = "youtube_subs"
+                        filename = f"{tit}.json"
                         
-                        found = True
-                        break
+                        with open(filename, 'w', encoding='utf-8') as f:
+                            f.write(json_string)
+
+                        print(f"[SUCCESS] JSON saved to {filename}")
+                        page.stop_loading()
+                        return filename
+                    except Exception as e:
+                        print(f"[ERROR] Failed to save JSON: {e}")
             
+            retries += 1
             if not found:
-                print("No subtitle API response found yet, retrying...")
-                time.sleep(5)
-                retries += 1
+                print("[!] No subtitle API response found in this batch, retrying...")
                 
         return None
 
@@ -405,18 +423,48 @@ class YouTubeSearcher:
             
         json_path = None
         try:
-            print(f"Launching browser for {url}...")
+            print(f"[*] Launching browser for {url}...")
+            # Use headless if not in a desktop environment or as a preference
+            # For verification, we'll keep it default (usually headed)
             self.page = ChromiumPage()
-            self.page.listen.start()
-            self.page.get(f"{url}&cc_load_policy=1") 
+            
+            # Start listening BEFORE navigation and specify target
+            self.page.listen.start(targets='timedtext')
+            
+            print(f"[*] Navigating to {url}...")
+            self.page.get(url) 
+            
+            # Wait for video to appear
+            video = self.page.ele('tag:video', timeout=10)
+            if video:
+                # Try to enable CC automatically
+                # 1. Check if already enabled
+                try:
+                    cc_btn = self.page.ele('.ytp-subtitles-button', timeout=3)
+                    if cc_btn:
+                        if cc_btn.attr('aria-pressed') == 'false':
+                            print("[*] Enabling subtitles via CC button click...")
+                            cc_btn.click()
+                        else:
+                            print("[*] Subtitles already active.")
+                    else:
+                        # Fallback to keyboard shortcut 'c'
+                        print("[*] CC button not found, trying keyboard shortcut 'c'...")
+                        video.click()
+                        self.page.actions.type('c')
+                except Exception as e:
+                    print(f"[!] Warning: Could not interact with CC button: {e}")
             
             # Use the internal wait helper
             json_path = self._wait_for_subs(self.page)
             self.page.quit()
         except Exception as e:
-            print(f"Browser automation failed: {e}")
-            if self.page:
-                self.page.quit()
+            print(f"[ERROR] Browser automation failed: {e}")
+            if hasattr(self, 'page') and self.page:
+                try:
+                    self.page.quit()
+                except:
+                    pass
             return None
             
         if json_path:
@@ -487,7 +535,7 @@ class RAGEngine:
             transcript = f.read()
 
         # 3. Generate Questions
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
         
         prompt = f"""
         Generate {num_questions} multiple-choice questions based on the following transcript.
@@ -557,7 +605,7 @@ class RAGEngine:
         with open(txt_path, "r", encoding="utf-8") as f:
             transcript = f.read()
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+        llm = ChatGoogleGenerativeAI(model="gemini-1.5-flash", temperature=0.7)
         
         # We can do this in one comprehensive prompt or multiple. 
         # For better structure, let's use a structured prompt.

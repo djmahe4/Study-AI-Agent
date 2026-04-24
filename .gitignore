@@ -224,3 +224,7 @@ data/
 
 # Gemini
 #GEMINI.md
+
+SkillMetadata.json
+Syllabus.json
+skills/compiler_design/
