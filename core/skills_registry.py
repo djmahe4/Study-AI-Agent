@@ -257,7 +257,7 @@ class SkillsRegistry:
             logger.warning("Skills root directory does not exist: %s", self._root)
             return 0
 
-        for entry in sorted(self._root.rglobe("SKILL.md")):
+        for entry in sorted(self._root.rglob("SKILL.md")):
             skill_dir = entry.parent
             skill = _load_skill(skill_dir)
             if skill:

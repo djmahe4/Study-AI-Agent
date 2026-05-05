@@ -40,5 +40,19 @@
     "syllabus_path": "data\\subjects\\iot/syllabus/syllabus.json",
     "question_bank_path": null,
     "created_at": "2026-04-24 11:28:40.778402"
+  },
+  {
+    "name": "Ethical hacking",
+    "folder_path": "data\\subjects\\ethical_hacking",
+    "syllabus_path": "data\\subjects\\ethical_hacking/syllabus/syllabus.json",
+    "question_bank_path": null,
+    "created_at": "2026-05-02 23:57:36.388140"
+  },
+  {
+    "name": "Industrial Economics and Foreign trade",
+    "folder_path": "data\\subjects\\industrial_economics_and_foreign_trade",
+    "syllabus_path": "data\\subjects\\industrial_economics_and_foreign_trade/syllabus/syllabus.json",
+    "question_bank_path": null,
+    "created_at": "2026-05-05 16:46:17.713854"
   }
 ]

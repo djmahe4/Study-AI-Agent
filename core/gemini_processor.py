@@ -72,14 +72,17 @@ class GeminiProcessor:
     Processes syllabus text using Gemini AI to extract structured data.
     Uses the new google-genai SDK.
     """
+    # flash-lite: 30 RPM, 1500 req/day (FREE)  —  much safer for bulk use
+    # flash:      10 RPM,   20 req/day (FREE)  —  use only for complex, one-off tasks
+    DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
     
-    def __init__(self, client: Optional[genai.Client] = None, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, client: Optional[genai.Client] = None, model_name: str = DEFAULT_MODEL):
         """
         Initialize GeminiProcessor with a Gemini client.
         
         Args:
             client: An initialized google.genai.Client. If None, one will be created.
-            model_name: The model to use (default: gemini-2.5-flash).
+            model_name: The model to use (default: gemini-2.5-flash-lite for bulk operations).
         """
         if client:
             self.client = client
@@ -175,6 +178,27 @@ Return the result as a valid JSON object matching the following structure:
         # Fallback to exponential backoff
         return wait_exponential(multiplier=2, min=5, max=60)(retry_state)
 
+    @staticmethod
+    def _is_daily_quota_error(error: Exception) -> bool:
+        """Returns True if the error is a daily quota exhaustion (not a per-minute rate limit)."""
+        error_str = str(error)
+        return "GenerateRequestsPerDayPerProjectPerModel" in error_str or "quota" in error_str.lower()
+
+    def _should_retry(self, error: Exception) -> bool:
+        """Retry only per-minute rate limits (429 RPM), not daily quota exhaustion."""
+        if not isinstance(error, APIError):
+            return False
+        if "429" not in str(error) and "503" not in str(error):
+            return False
+        # Do NOT retry daily quota errors — they won't recover within the session
+        if self._is_daily_quota_error(error):
+            logger.error(
+                "Daily API quota exhausted. Stopping retries. "
+                "Consider upgrading or waiting until the quota resets."
+            )
+            return False
+        return True
+
     def _call_gemini_with_schema(self, prompt: str, schema_cls: Any) -> Any:
         """
         Call Gemini model and parse the response into a Pydantic model.
@@ -189,7 +213,7 @@ Return the result as a valid JSON object matching the following structure:
             try:
                 # We use a functional retry to handle dynamic waits better
                 for attempt in tenacity.Retrying(
-                    retry=retry_if_exception(lambda e: isinstance(e, APIError) and ("429" in str(e) or "503" in str(e))),
+                    retry=retry_if_exception(self._should_retry),
                     wait=self._wait_strategy,
                     stop=stop_after_attempt(5),
                     reraise=True

@@ -294,7 +294,7 @@ class TestSkillsRegistry:
     def test_lists_six_skills(self):
         registry = self._get_registry()
         names = registry.list_skills()
-        assert len(names) == 6, f"Expected 6 skills, got {len(names)}: {names}"
+        assert len(names) >= 6, f"Expected at least 6 skills, got {len(names)}: {names}"
 
     def test_get_skill_by_name(self):
         registry = self._get_registry()

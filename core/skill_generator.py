@@ -33,7 +33,8 @@ class SkillGenerator:
     """
 
     def __init__(self, gemini_processor: Optional[GeminiProcessor] = None):
-        self.processor = gemini_processor or GeminiProcessor()
+        # Use flash-lite for bulk skill generation: 1500 req/day vs 20 req/day for flash
+        self.processor = gemini_processor or GeminiProcessor(model_name="gemini-3.1-flash-lite-preview") #"gemini-2.5-flash-lite")
         self.persistence = get_persistence_manager()
         self.cache_path = Path("data/cache/skill_factory.json")
         self.cache_path.parent.mkdir(parents=True, exist_ok=True)
@@ -210,6 +211,8 @@ class SkillGenerator:
 
             for md_file in files_to_process:
                 stats["total"] += 1
+                # Initialize before try so it's always defined in the except block
+                is_cache_hit = False
                 try:
                     if "mermaid" in md_file.name:
                         continue
@@ -230,15 +233,15 @@ class SkillGenerator:
                     else:
                         stats["failed"] += 1
                         
-                    # Always sleep if we didn't hit the cache to prevent cascading rate limits
+                    # Sleep between API calls to respect flash-lite's 30 RPM limit
                     if not is_cache_hit:
-                        time.sleep(15) # Increased to 15s for 4 RPM to be ultra safe
+                        time.sleep(3)  # 3s = ~20 RPM, safe for flash-lite (30 RPM)
                 except Exception as e:
                     logger.error(f"Error processing {md_file}: {e}")
                     stats["failed"] += 1
-                    # Ensure we sleep on unexpected looping errors too
+                    # Ensure we sleep on unexpected looping errors too (is_cache_hit is always defined now)
                     if not is_cache_hit:
-                        time.sleep(15)
+                        time.sleep(3)
 
         return stats
 
