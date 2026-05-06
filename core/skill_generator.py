@@ -233,15 +233,15 @@ class SkillGenerator:
                     else:
                         stats["failed"] += 1
                         
-                    # Sleep between API calls to respect flash-lite's 30 RPM limit
+                    # Sleep between API calls to respect flash-lite's RPM limits
                     if not is_cache_hit:
-                        time.sleep(3)  # 3s = ~20 RPM, safe for flash-lite (30 RPM)
+                        time.sleep(6)  # 6s = 10 RPM, safe for both 2.5 and 3.1 flash-lite
                 except Exception as e:
                     logger.error(f"Error processing {md_file}: {e}")
                     stats["failed"] += 1
                     # Ensure we sleep on unexpected looping errors too (is_cache_hit is always defined now)
                     if not is_cache_hit:
-                        time.sleep(3)
+                        time.sleep(6)
 
         return stats
 
