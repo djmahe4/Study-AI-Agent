@@ -300,12 +300,12 @@ print(answer)
 ```
 Study-AI-Agent/
 ├── core/
-│   ├── gemini_processor.py    ← Add Gemini API here
-│   └── rag.py                 ← Add RAG/LangChain here
-├── cli.py                     ← Update commands to use RAG
-├── api.py                     ← Create for backend API (optional)
-├── .env                       ← Add API keys here (create this)
-└── frontend/src/Terminal.jsx  ← Connect to API (optional)
+│   ├── gemini_processor.py    ← Syllabus processing
+│   ├── diagram_generator.py   ← AI Conceptual Mapping
+│   └── rag.py                 ← RAG/LangChain engine
+├── cli.py                     ← Main CLI entry point
+├── requirements.txt           ← Managed dependencies
+└── .env                       ← API keys storage
 ```
 
 ---

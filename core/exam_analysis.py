@@ -13,6 +13,8 @@ from google.genai import types
 from icecream import ic
 ic.disable()
 from core.models import ExamPattern, AnalyzedQuestion, QuestionBank
+from tenacity import retry, stop_after_attempt, wait_exponential, retry_if_exception_type, before_sleep_log, wait_random_exponential
+from google.api_core.exceptions import ResourceExhausted
 
 # Configure logging
 logging.basicConfig(level=logging.INFO)
@@ -21,9 +23,16 @@ logger = logging.getLogger(__name__)
 
 class QuestionPaperAnalyzer:
     def __init__(self, api_key: str):
+        # Use flash lite for answer generation (quality matters)
         self.llm = ChatGoogleGenerativeAI(
-            model="gemini-2.5-flash",
-            temperature=0.2,  # Deterministic for extraction
+            model="gemini-3.1-flash-lite-preview",
+            temperature=0.2,
+            google_api_key=api_key
+        )
+        # Use flash-lite for bulk parsing (1500 req/day vs 20 req/day)
+        self.bulk_llm = ChatGoogleGenerativeAI(
+            model="gemini-3.1-flash-lite-preview",
+            temperature=0.1,
             google_api_key=api_key
         )
 
@@ -89,12 +98,20 @@ class QuestionPaperAnalyzer:
         {}
         """
 
-        structured_llm = self.llm.with_structured_output(QuestionBank)
+        structured_llm = self.bulk_llm.with_structured_output(QuestionBank)
+
+        @retry(
+            retry=retry_if_exception_type(ResourceExhausted),
+            stop=stop_after_attempt(4),
+            wait=wait_random_exponential(multiplier=1, min=30, max=90),
+            before_sleep=before_sleep_log(logger, logging.WARNING)
+        )
+        def _invoke_full_text():
+            return structured_llm.invoke(base_prompt.format(text))
 
         try:
-            prompt = base_prompt.format(text)
             ic("Invoking LLM for full text parsing...")
-            result = structured_llm.invoke(prompt)
+            result = _invoke_full_text()
             questions = result.questions
             ic(f"LLM returned {len(questions)} questions from full text.")
             # Post-process to add metadata, with fallback for year
@@ -104,52 +121,70 @@ class QuestionPaperAnalyzer:
                 q.paper_name = paper_name
 
             return questions
+        except ResourceExhausted as e:
+            logger.error(f"Rate limit hit during full-text parsing (after retries): {e}")
+            logger.warning("Falling back to year-wise splitting (fewer, smaller requests).")
         except Exception as e:
             logger.warning(f"LLM Extraction on full text failed: {e}. Falling back to year-wise splitting.")
 
-            # Fallback: Split into year sections and parse each
-            sections = self._extract_year_sections(text, year)
-            all_questions = []
+        # Fallback: Split into year sections and parse each
+        sections = self._extract_year_sections(text, year)
+        all_questions = []
 
-            fallback_prompt_template = """
-            Extract all examination questions from the following text section.
+        fallback_prompt_template = """
+        Extract all examination questions from the following text section.
 
-            Use the year: {} for all questions in this section.
+        Use the year: {} for all questions in this section.
 
-            For each question, identify:
-            - Question Number (integer)
-            - Part/Sub-question (e.g., 'a', 'b', or null)
-            - The exact Text of the question
-            - Marks allocated (integer, infer from context if possible, else 0)
+        For each question, identify:
+        - Question Number (integer)
+        - Part/Sub-question (e.g., 'a', 'b', or null)
+        - The exact Text of the question
+        - Marks allocated (integer, infer from context if possible, else 0)
 
-            Ignore instructions like "Answer all questions" or extraneous header information.
-            Focus on the numbered questions.
+        Ignore instructions like "Answer all questions" or extraneous header information.
+        Focus on the numbered questions.
 
-            Text:
-            {}
-            """
+        Text:
+        {}
+        """
 
-            for sec_year, sec_text in sections:
-                if not sec_text.strip():
-                    continue
-                try:
-                    sub_prompt = fallback_prompt_template.format(sec_year, sec_text)
-                    sub_result = structured_llm.invoke(sub_prompt)
-                    ic("Invoked LLM for year section:", sec_year)
-                    sub_questions = sub_result.questions
+        @retry(
+            retry=retry_if_exception_type(ResourceExhausted),
+            stop=stop_after_attempt(3),
+            wait=wait_random_exponential(multiplier=1, min=15, max=60),
+            before_sleep=before_sleep_log(logger, logging.WARNING)
+        )
+        def _invoke_section(prompt: str):
+            return structured_llm.invoke(prompt)
 
-                    for q in sub_questions:
-                        q.year = sec_year
-                        q.paper_name = paper_name
-                        all_questions.append(q)
+        for i, (sec_year, sec_text) in enumerate(sections):
+            if not sec_text.strip():
+                continue
+            try:
+                sub_prompt = fallback_prompt_template.format(sec_year, sec_text)
+                sub_result = _invoke_section(sub_prompt)
+                ic("Invoked LLM for year section:", sec_year)
+                sub_questions = sub_result.questions
 
-                    logger.info(f"Successfully parsed section for year {sec_year} with {len(sub_questions)} questions.")
-                except Exception as sub_e:
-                    logger.error(f"Failed to parse section for year {sec_year}: {sub_e}")
-                    continue
+                for q in sub_questions:
+                    q.year = sec_year
+                    q.paper_name = paper_name
+                    all_questions.append(q)
 
-            logger.info(f"Fallback parsing completed. Total questions extracted: {len(all_questions)}")
-            return all_questions
+                logger.info(f"Successfully parsed section for year {sec_year} with {len(sub_questions)} questions.")
+                # Small inter-section delay to stay within RPM
+                if i < len(sections) - 1:
+                    time.sleep(3)
+            except ResourceExhausted:
+                logger.error(f"Rate limit exhausted for section year {sec_year}. Skipping remaining sections.")
+                break
+            except Exception as sub_e:
+                logger.error(f"Failed to parse section for year {sec_year}: {sub_e}")
+                continue
+
+        logger.info(f"Fallback parsing completed. Total questions extracted: {len(all_questions)}")
+        return all_questions
 
     def map_questions_to_modules(self, questions: List[AnalyzedQuestion], pattern: ExamPattern) -> List[
         AnalyzedQuestion]:
@@ -193,6 +228,12 @@ class QuestionPaperAnalyzer:
 
         return mapped_qs
 
+    @retry(
+        retry=retry_if_exception_type(ResourceExhausted),
+        stop=stop_after_attempt(5),
+        wait=wait_exponential(multiplier=15, min=30, max=120),
+        before_sleep=before_sleep_log(logger, logging.WARNING)
+    )
     def generate_answer(self, question: AnalyzedQuestion, context: str = "") -> str:
         """
         Generates an answer for a specific question, optionally using context.
@@ -209,8 +250,10 @@ class QuestionPaperAnalyzer:
         Provide a concise, point-wise answer suitable for an exam.
         """
         try:
-            response = self.llm.invoke(prompt, tools=[types.Tool(google_search=types.GoogleSearch())]
-                                       )
+            response = self.llm.invoke(prompt, tools=[types.Tool(google_search=types.GoogleSearch())])
             return response.content
-        except Exception:
-            return "Failed to generate answer."
+        except ResourceExhausted:
+            raise
+        except Exception as e:
+            logger.error(f"Error generating answer: {e}")
+            return f"Failed to generate answer: {e}"

@@ -1,6 +1,11 @@
-# TODO: Future Enhancements
-
 ## Recently Completed ✅
+
+### Study & Visualization (v2.5)
+- [x] **Gemini Integration**: Full syllabus processing, structure extraction, and enrichment.
+- [x] **RAG for Papers**: Automated mapping of PDF questions to syllabus topics and notes.
+- [x] **Conceptual Diagrams**: AI-powered relationship mapping using Gemini 2.5 Flash.
+- [x] **Interactive PYQs**: Selective answer generation with rich terminal previews.
+- [x] **Module Filtering**: Precise targeting for mindmaps and PYQ solutions.
 
 ### CLI Improvements (v1.1)
 - [x] Fixed interactive mode command execution
@@ -12,27 +17,27 @@
 ## High Priority
 
 ### 1. Gemini Integration
-- [ ] Add Google Gemini API integration to `core/gemini_processor.py`
-- [ ] Implement actual syllabus text processing with Gemini
-- [ ] Add API key management (environment variables)
-- [ ] Handle rate limiting and retries
+- [x] Add Google Gemini API integration to `core/gemini_processor.py`
+- [x] Implement actual syllabus text processing with Gemini
+- [x] Add API key management (environment variables)
+- [x] Handle rate limiting and retries
 - [ ] Add streaming responses for better UX
 
 ### 2. RAG Tool for Question Banks
-- [ ] Integrate LangChain for RAG functionality
-- [ ] Add PDF parsing (PyPDF2 or pdfplumber)
-- [ ] Implement vector database (FAISS, Chroma, or Pinecone)
-- [ ] Add document chunking strategies
-- [ ] Support embedding models (OpenAI embeddings, Sentence Transformers)
-- [ ] Add semantic search over question banks
-- [ ] Implement answer generation from question bank context
+- [x] Integrate LangChain for RAG functionality
+- [x] Add PDF parsing (pdfplumber/QuestionPaperExtractor)
+- [x] Implement vector database (SQLite KnowledgeBase for now)
+- [x] Add document mapping strategies (Module/Topic mapping)
+- [x] Support embedding models (Gemini-based analysis)
+- [x] Add semantic search (Fuzzy matching + AI scoring)
+- [x] Implement answer generation from question bank context
 
 ### 3. Subject Context Management
-- [ ] Make all CLI commands subject-aware
-- [ ] Filter topics/questions by current subject
+- [x] Make all CLI commands subject-aware
+- [x] Filter topics/questions by current subject
 - [ ] Add subject switching in React Terminal CLI
 - [ ] Implement subject-specific animations
-- [ ] Create subject-specific mind maps
+- [x] Create subject-specific mind maps (v2)
 
 ## Medium Priority
 

@@ -170,24 +170,36 @@ def create_main_chain(fpath):
     chunks = splitter.create_documents([transcript])
     print(f"Number of chunks created: {len(chunks)}")
 
-    # 2. Initialize Embeddings and Vector Store with Google Generative AI
-    # Note: Requires google-generativeai to be installed or compatible shim
+    # 2. Initialize Embeddings and Vector Store
+    # We prioritize local HuggingFace embeddings if available
+    embeddings = None
     try:
-        embeddings = GoogleGenerativeAIEmbeddings(model="models/embedding-001")
-    except Exception as e:
-        logger.warning(f"Google Generative AI Embeddings not available: {e}. Falling back to HuggingFace embeddings.")
-        # Choose one of the recommended models
+        # Check if we can use local embeddings (may be blocked by system policy)
+        from langchain_huggingface import HuggingFaceEmbeddings
         embeddings = HuggingFaceEmbeddings(
-            model_name="BAAI/bge-small-en-v1.5"  # Or "sentence-transformers/all-mpnet-base-v2"
-            # Optional parameters:
-            # model_kwargs={"device": "cpu"},  # Use "cuda" if GPU is available for faster computation
-            # encode_kwargs={"normalize_embeddings": True}
+            model_name="BAAI/bge-small-en-v1.5",
+            model_kwargs={"device": "cpu"},
+            encode_kwargs={"normalize_embeddings": True}
         )
+        print("[*] Using local HuggingFace embeddings.")
+    except Exception as e:
+        logger.warning(f"Local embeddings failed (likely system policy): {e}")
+        
+    if not embeddings:
+        try:
+            # Fallback to Gemini embedding model
+            # Based on available models list: models/gemini-embedding-2
+            embeddings = GoogleGenerativeAIEmbeddings(model="models/gemini-embedding-2")
+            print("[*] Using Google Generative AI embeddings (models/gemini-embedding-2).")
+        except Exception as e2:
+            logger.error(f"All embedding models failed: {e2}")
+            return None
+
     vector_store = FAISS.from_documents(chunks, embeddings)
     base_retriever = vector_store.as_retriever(search_type="similarity", search_kwargs={"k": 4})
 
-    # 3. Initialize Chat Model with Gemini 2.5 Flash
-    llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=1.0)
+    # 3. Initialize Chat Model
+    llm = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash", temperature=1.0)
 
     # --- Context Window Optimization Implementation ---
     # 4. Create a compressor for the retrieved documents
@@ -286,55 +298,63 @@ class YouTubeSearcher:
         #     # Initialize lazily or on demand
         #     pass
 
-    def _wait_for_subs(self, page, timeout=10) -> Optional[str]:
+    def _wait_for_subs(self, page, video_id: str, timeout=15) -> Optional[str]:
         """
-        Internal method to listen for subtitle API responses.
+        Internal method to listen for subtitle API responses, filtering by video ID.
         """
-        print("Waiting for network requests...")
-        time.sleep(timeout) # Wait for video to load and subs to fetch
-        found=False
+        print(f"[*] Waiting for network requests (timedtext) for video {video_id}...")
+        found = False
         
         # Filter and display subtitle API responses
         max_retries = 3
         retries = 0
         
         while not found and retries < max_retries:
-            print("!! Click 'CC' button manually to extract subtitles (if running interactively)")
-            for step in page.listen.steps():
-                if hasattr(step, 'response') and step.response:
-                    url = step.response.url
-                    try:
-                        content_type = step.response.headers.get('Content-Type', '')
-                    except:
-                        continue
-                        
-                    if 'api' in url.lower() and 'timedtext' in url.lower() and 'json' in content_type:
-                        print(f"API URL: {url}")
+            # Try to trigger CC if not found yet
+            if retries > 0:
+                print(f"[*] Retry {retries}: Attempting to toggle CC again...")
+                try:
+                    video = page.ele('tag:video', timeout=2)
+                    if video:
+                        video.click()
+                        page.actions.type('c')
+                except:
+                    pass
+
+            # Wait for the listener to catch something
+            res = page.listen.wait(timeout=5)
+            if res:
+                url = res.url
+                if 'timedtext' in url.lower():
+                    # Check if the video ID matches to avoid capturing ad subtitles
+                    if f"v={video_id}" in url or f"video_id={video_id}" in url:
+                        print(f"[+] Found correct Subtitle API URL: {url}")
                         try:
-                            body = step.response.body
+                            if not res.response or not res.response.body:
+                                print("[!] Empty response body, skipping...")
+                                continue
+                                
+                            body = res.response.body
                             json_string = json.dumps(body, indent=2, ensure_ascii=False)
                             tit = page.title.replace(" ","_")
                             # Sanitize filename
-                            tit = "".join([c for c in tit if c.isalpha() or c.isdigit() or c=='_']).rstrip()
+                            tit = "".join([c for c in tit if c.isalnum() or c=='_']).rstrip()
+                            if not tit: tit = "youtube_subs"
                             filename = f"{tit}.json"
                             
                             with open(filename, 'w', encoding='utf-8') as f:
                                 f.write(json_string)
 
-                            print(f"✅ JSON saved to {filename}")
+                            print(f"[SUCCESS] JSON saved to {filename}")
                             page.stop_loading()
                             return filename
                         except Exception as e:
-                            print("❌ Failed to save JSON:", e)
-                        
-                        found = True
-                        break
+                            print(f"[ERROR] Failed to save JSON: {e}")
+                    else:
+                        print(f"[*] Ignoring subtitle URL for different video (likely an ad): {url}")
             
-            if not found:
-                print("No subtitle API response found yet, retrying...")
-                time.sleep(5)
-                retries += 1
-                
+            retries += 1
+            
         return None
 
     def search_and_get_subtitles(self, course_name: str, topic: str, university: Optional[str] = None) -> List[Dict[str, Any]]:
@@ -403,20 +423,193 @@ class YouTubeSearcher:
             print("DrissionPage not installed.")
             return None
             
+        # 0. Cache Check
+        # We need a predictable filename based on the URL or Title
+        # For simplicity, we'll check if a JSON matching this video ID exists
+        video_id = ""
+        if "v=" in url:
+            video_id = url.split("v=")[1].split("&")[0]
+        elif "be/" in url:
+            video_id = url.split("be/")[1].split("?")[0]
+            
+        # Check data/cache first
+        cache_dir = os.path.join("data", "cache")
+        if not os.path.exists(cache_dir):
+            os.makedirs(cache_dir, exist_ok=True)
+            
+        import glob
+        # Search for existing JSON with this video_id in data/cache
+        pattern = os.path.join(cache_dir, f"*{video_id}*.json")
+        existing_jsons = glob.glob(pattern)
+        if existing_jsons:
+            print(f"[*] Found cached transcript for {video_id}: {existing_jsons[0]}")
+            return post_load_json(existing_jsons[0])
+
         json_path = None
         try:
-            print(f"Launching browser for {url}...")
+            print(f"[*] Launching browser for {url}...")
+            # Use headless if not in a desktop environment or as a preference
+            # For verification, we'll keep it default (usually headed)
             self.page = ChromiumPage()
-            self.page.listen.start()
-            self.page.get(f"{url}&cc_load_policy=1") 
             
-            # Use the internal wait helper
-            json_path = self._wait_for_subs(self.page)
+            # Start listening BEFORE navigation and specify target
+            self.page.listen.start(targets='timedtext')
+            
+            print(f"[*] Navigating to {url}...")
+            self.page.get(url) 
+            
+            # Ad Skipping Logic (inspired by user's reference)
+            def skip_youtube_ads():
+                try:
+                    # Accelerate and mute any ad
+                    js_accelerate = """
+                    try {
+                        const player = document.getElementById('movie_player') || document.querySelector('.html5-video-player');
+                        if (player && (player.classList.contains('ad-showing') || player.classList.contains('ad-interrupting'))) {
+                            const video = document.querySelector('video.html5-main-video') || document.querySelector('video');
+                            if (video) {
+                                video.playbackRate = 16.0;
+                                video.muted = true;
+                                if (video.paused) video.play();
+                            }
+                            // Try to click skip button
+                            const skipBtn = document.querySelector('.ytp-ad-skip-button, .ytp-ad-skip-button-modern, .ytp-ad-skip-button-container');
+                            if (skipBtn) skipBtn.click();
+                            return "ad_detected";
+                        }
+                    } catch(e) {}
+                    return "no_ad";
+                    """
+                    for _ in range(10): # Try for 10 seconds
+                        res = self.page.run_js(js_accelerate)
+                        if res == "no_ad":
+                            # Check if ad is really gone
+                            if not self.page.ele('.ad-showing', timeout=0.5):
+                                break
+                        time.sleep(1)
+                except: pass
+
+            skip_youtube_ads()
+
+            # Wait for video to appear and be ready
+            video = self.page.ele('.html5-main-video', timeout=15)
+            if not video:
+                video = self.page.ele('tag:video', timeout=5)
+                
+            if video:
+                print("[*] Video detected. Waiting for player to settle...")
+                time.sleep(3) # Wait for UI overlays/ads to settle
+                
+                # Try to enable CC automatically
+                # 1. Check if already enabled
+                for attempt in range(3):
+                    try:
+                        # Hover over the video to make the controls (and CC button) visible
+                        print(f"[*] Attempt {attempt+1}: Hovering over video to show controls...")
+                        video.hover()
+                        time.sleep(1)
+                        
+                        cc_btn = self.page.ele('.ytp-subtitles-button', timeout=5)
+                        if cc_btn:
+                            if cc_btn.attr('aria-pressed') == 'false':
+                                print("[*] Enabling subtitles via CC button click...")
+                                cc_btn.click()
+                                time.sleep(1)
+                            else:
+                                print("[*] Subtitles already active.")
+                                break # Success
+                        else:
+                            # Fallback to keyboard shortcut 'c'
+                            print("[*] CC button not found, trying keyboard shortcut 'c'...")
+                            # Click video center to ensure focus
+                            video.click()
+                            self.page.actions.type('c')
+                            time.sleep(1)
+                            
+                        # Verify if subtitles are appearing (we'll see timedtext requests anyway)
+                        # but we can check the button state again
+                        cc_btn_check = self.page.ele('.ytp-subtitles-button', timeout=2)
+                        if cc_btn_check and cc_btn_check.attr('aria-pressed') == 'true':
+                            print("[*] Subtitles successfully activated.")
+                            break
+                    except Exception as e:
+                        print(f"[!] Attempt {attempt+1} failed: {e}")
+                        time.sleep(2)
+            else:
+                print("[!] Could not find video element.")
+            video_id = ""
+            if "v=" in url:
+                video_id = url.split("v=")[1].split("&")[0]
+            elif "be/" in url:
+                video_id = url.split("be/")[1].split("?")[0]
+                
+            # Wait for network requests (timedtext)
+            print(f"[*] Waiting for network requests (timedtext)...")
+            start_wait = time.time()
+            found_data = None
+            
+            # We'll wait up to 45 seconds total
+            while time.time() - start_wait < 45:
+                packet = self.page.listen.wait(timeout=1)
+                if packet:
+                    url_match = packet.url
+                    if 'timedtext' in url_match:
+                        # Extract v= parameter from URL
+                        import urllib.parse
+                        parsed_url = urllib.parse.urlparse(url_match)
+                        query_params = urllib.parse.parse_qs(parsed_url.query)
+                        req_v = query_params.get('v', [None])[0]
+                        
+                        if req_v == video_id:
+                            print(f"[*] Caught subtitles for main video: {req_v}")
+                            found_data = packet.response.body
+                            break
+                        else:
+                            # If we can't find the main video ID, we might accept the first one 
+                            # that appears AFTER we are sure ads are gone
+                            if not self.page.ele('.ad-showing', timeout=0.1):
+                                print(f"[*] Caught subtitles (ID: {req_v}). No ad showing, assuming this is the content.")
+                                found_data = packet.response.body
+                                break
+                            else:
+                                print(f"[*] Ignoring subtitle URL for ad video: {req_v}")
+                
+                # Periodically try to skip ads and toggle CC
+                if int(time.time() - start_wait) % 5 == 0:
+                    skip_youtube_ads()
+                    try:
+                        video.hover()
+                        self.page.actions.type('c')
+                    except: pass
+            
+            self.page.listen.stop()
             self.page.quit()
+
+            if found_data:
+                # Save to data/cache
+                import json
+                temp_json = os.path.join("data", "cache", f"yt_subs_{video_id}.json")
+                with open(temp_json, "w", encoding="utf-8") as f:
+                    if isinstance(found_data, dict):
+                        json.dump(found_data, f, ensure_ascii=False, indent=2)
+                    elif isinstance(found_data, bytes):
+                        f.write(found_data.decode('utf-8'))
+                    else:
+                        f.write(str(found_data))
+                
+                return post_load_json(temp_json)
+            
+            self.page.listen.stop()
+            self.page.quit()
+            return None
+
         except Exception as e:
-            print(f"Browser automation failed: {e}")
-            if self.page:
-                self.page.quit()
+            print(f"[ERROR] Browser automation failed: {e}")
+            if hasattr(self, 'page') and self.page:
+                try:
+                    self.page.quit()
+                except:
+                    pass
             return None
             
         if json_path:
@@ -487,7 +680,7 @@ class RAGEngine:
             transcript = f.read()
 
         # 3. Generate Questions
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+        llm = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash", temperature=0.7)
         
         prompt = f"""
         Generate {num_questions} multiple-choice questions based on the following transcript.
@@ -557,7 +750,7 @@ class RAGEngine:
         with open(txt_path, "r", encoding="utf-8") as f:
             transcript = f.read()
 
-        llm = ChatGoogleGenerativeAI(model="gemini-2.5-flash", temperature=0.7)
+        llm = ChatGoogleGenerativeAI(model="models/gemini-2.5-flash", temperature=0.7)
         
         # We can do this in one comprehensive prompt or multiple. 
         # For better structure, let's use a structured prompt.

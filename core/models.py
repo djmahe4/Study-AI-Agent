@@ -25,6 +25,22 @@ class MermaidDiagram(BaseModel):
     title: Optional[str] = None
     script: str = Field(..., description="The raw Mermaid script content")
 
+
+class ConceptRelationship(BaseModel):
+    """A relationship between two concepts within a topic."""
+    from_concept: str = Field(..., description="Source concept")
+    to_concept: str = Field(..., description="Target concept")
+    relationship: str = Field(..., description="Relationship type e.g. 'uses', 'extends', 'precedes', 'produces'")
+
+
+class ConceptDiagramSet(BaseModel):
+    """Gemini's structured response: a set of conceptual diagrams for a topic."""
+    topic_name: str
+    summary: str = Field(..., description="One-line conceptual summary of the topic")
+    diagrams: List[MermaidDiagram] = Field(default_factory=list, description="List of mermaid diagrams for conceptual understanding")
+    relationships: List[ConceptRelationship] = Field(default_factory=list, description="Key concept relationships identified")
+
+
 class Topic(BaseModel):
     """
     Represents a learning topic with structured knowledge.
@@ -80,6 +96,8 @@ class Question(BaseModel):
     """
     id: str = Field(default_factory=lambda: str(uuid.uuid4()))
     topic: str
+    subject: Optional[str] = Field(None, description="Subject name")
+    module: Optional[str] = Field(None, description="Module name")
     question: str
     answer: str
     difficulty: Literal["easy", "medium", "hard"] = Field(default="medium", description="Difficulty level")
@@ -193,3 +211,175 @@ class QuestionBank(BaseModel):
     Collection of analyzed questions.
     """
     questions: List[AnalyzedQuestion] = Field(default_factory=list)
+
+
+# ============================================================================
+# GAMIFICATION MODELS
+# ============================================================================
+
+class Achievement(BaseModel):
+    """
+    Represents a user achievement/badge.
+    """
+    id: str
+    name: str
+    description: str
+    icon: str
+    category: str  # "completion", "mastery", "consistency", etc.
+    earned_at: datetime = Field(default_factory=datetime.now)
+
+
+class UserProgress(BaseModel):
+    """
+    Tracks user's overall progress and gamification stats.
+    """
+    total_points: int = 0
+    current_level: int = 1
+    achievements: List[Achievement] = Field(default_factory=list)
+    current_streak: int = 0
+    longest_streak: int = 0
+    total_study_hours: float = 0.0
+    total_pomodoros: int = 0
+    total_todos_completed: int = 0
+    last_activity_date: Optional[datetime] = None
+    weekly_points: Dict[str, int] = Field(default_factory=dict)
+    points_to_next_level: int = 100
+    
+    def add_points(self, points: int) -> bool:
+        """Add points and check for level up."""
+        self.total_points += points
+        if self.total_points >= self.points_to_next_level:
+            self.current_level += 1
+            self.points_to_next_level = int(self.points_to_next_level * 1.5)
+            return True  # Leveled up
+        return False
+    
+    def calculate_level_progress(self) -> float:
+        """Calculate percentage progress to next level."""
+        total_for_level = self.points_to_next_level
+        points_in_level = self.total_points
+        return (points_in_level / total_for_level) * 100
+    
+    def get_level_name(self) -> str:
+        """Get display name for current level."""
+        level_names = {
+            1: "Novice Learner", 2: "Emerging Scholar", 3: "Dedicated Student",
+            4: "Knowledge Seeker", 5: "Focused Learner", 6: "Academic Achiever",
+            7: "Rising Star", 8: "Study Pro", 9: "Knowledge Master",
+            10: "Learning Legend"
+        }
+        return level_names.get(self.current_level, f"Level {self.current_level}")
+
+
+class PomodoroSession(BaseModel):
+    """
+    Represents a Pomodoro study session.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    subject: Optional[str] = None
+    topic: Optional[str] = None
+    start_time: datetime = Field(default_factory=datetime.now)
+    end_time: Optional[datetime] = None
+    duration_minutes: int = 25
+    break_duration: int = 5
+    completed: bool = False
+    cycles_completed: int = 0
+    notes: Optional[str] = None
+    points_earned: int = 0
+
+
+class TodoItem(BaseModel):
+    """
+    Represents a TODO item.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: Optional[str] = None
+    subject: Optional[str] = None
+    topic: Optional[str] = None
+    priority: Literal["low", "medium", "high"] = "medium"
+    due_date: Optional[datetime] = None
+    completed: bool = False
+    completed_at: Optional[datetime] = None
+    created_at: datetime = Field(default_factory=datetime.now)
+    points_earned: int = 0
+
+
+class Flashcard(BaseModel):
+    """
+    Represents a single flashcard.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    front: str
+    back: str
+    tags: List[str] = Field(default_factory=list)
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+    times_reviewed: int = 0
+    times_correct: int = 0
+    last_reviewed: Optional[datetime] = None
+
+
+class FlashcardDeck(BaseModel):
+    """
+    Represents a collection of flashcards.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    name: str
+    description: Optional[str] = None
+    subject: Optional[str] = None
+    module: Optional[str] = None
+    cards: List[Flashcard] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class CustomNote(BaseModel):
+    """
+    Represents a custom user note.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    content: str
+    subject: str
+    module: Optional[str] = None
+    topic: Optional[str] = None
+    tags: List[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.now)
+    updated_at: datetime = Field(default_factory=datetime.now)
+
+
+class CheatsheetSection(BaseModel):
+    """
+    Represents a section in a cheatsheet.
+    """
+    title: str
+    content: str
+    subsections: List[dict] = Field(default_factory=list)
+
+
+class Cheatsheet(BaseModel):
+    """
+    Represents a study cheatsheet for quick revision.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    subject: str
+    module: Optional[str] = None
+    topic: Optional[str] = None
+    sections: List[CheatsheetSection] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.now)
+
+
+class PracticeProblem(BaseModel):
+    """
+    Represents a practice problem for skill building.
+    """
+    id: str = Field(default_factory=lambda: str(uuid.uuid4()))
+    title: str
+    description: str
+    difficulty: Literal["easy", "medium", "hard"] = "medium"
+    subject: str
+    topic: str
+    solution: Optional[str] = None
+    hints: List[str] = Field(default_factory=list)
+    tags: List[str] = Field(default_factory=list)
+    created_at: datetime = Field(default_factory=datetime.now)

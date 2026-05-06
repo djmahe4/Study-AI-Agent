@@ -1,26 +1,34 @@
 """
 Module for processing syllabus text using Gemini AI (google-genai SDK).
+
+All user-supplied inputs (syllabus text, subject names) are sanitized via
+:mod:`core.input_validator` before being embedded in LLM prompts.
+This defends against HTML/script injection and prompt-injection attacks.
 """
 import json
 import os
 import hashlib
 import logging
-logging.basicConfig(filename='gemini_processor.log', level=logging.INFO)
 from typing import Optional, Dict, Any, Union
 from pathlib import Path
 from .models import Syllabus, Topic
 from .utils import normalize_subject_name, get_subject_dir
+from .input_validator import sanitize_syllabus_text, validate_subject_name
 from google import genai
 from google.genai import types
-import google.genai
 from pydantic import BaseModel as PydanticModel
+from google.genai.errors import APIError
+import tenacity
+from tenacity import retry_if_exception, wait_exponential, stop_after_attempt, wait_fixed
+from dotenv import load_dotenv
 
-# Configure logging
-logging.basicConfig(level=logging.INFO)
+# Module-level logger – configuration is the responsibility of the application
+# entry point (cli.py / streamlit/app.py), not this library module.
 logger = logging.getLogger(__name__)
 
 CACHE_DIR = Path("data/cache/gemini")
 CACHE_DIR.mkdir(parents=True, exist_ok=True)
+load_dotenv()
 
 class SimpleGeminiCache:
     """
@@ -64,20 +72,23 @@ class GeminiProcessor:
     Processes syllabus text using Gemini AI to extract structured data.
     Uses the new google-genai SDK.
     """
+    # flash-lite: 30 RPM, 1500 req/day (FREE)  —  much safer for bulk use
+    # flash:      10 RPM,   20 req/day (FREE)  —  use only for complex, one-off tasks
+    DEFAULT_MODEL = "gemini-3.1-flash-lite-preview"
     
-    def __init__(self, client: Optional[genai.Client] = None, model_name: str = "gemini-2.5-flash"):
+    def __init__(self, client: Optional[genai.Client] = None, model_name: str = DEFAULT_MODEL):
         """
         Initialize GeminiProcessor with a Gemini client.
         
         Args:
             client: An initialized google.genai.Client. If None, one will be created.
-            model_name: The model to use (default: gemini-2.5-flash).
+            model_name: The model to use (default: gemini-2.5-flash-lite for bulk operations).
         """
         if client:
             self.client = client
         else:
             # Assumes GEMINI_API_KEY or GOOGLE_API_KEY is set in environment
-            self.client = genai.Client()
+            self.client = genai.Client(api_key=os.getenv("GEMINI_API_KEY") or os.getenv("GOOGLE_API_KEY"))
             
         self.model_name = model_name
         self.cache = SimpleGeminiCache()
@@ -85,15 +96,29 @@ class GeminiProcessor:
     def process_syllabus_text(self, syllabus_text: str, subject_name: str) -> Syllabus:
         """
         Process syllabus text using Gemini to extract structured data.
-        
+
+        User-supplied inputs are sanitized before being embedded in the prompt:
+
+        * ``syllabus_text`` is stripped of HTML and special characters via
+          :func:`core.input_validator.sanitize_syllabus_text`.
+        * ``subject_name`` is validated and cleaned via
+          :func:`core.input_validator.validate_subject_name`.
+
         Args:
-            syllabus_text: Raw syllabus text
-            subject_name: Name of the subject
-            
+            syllabus_text: Raw syllabus text (from file or user paste).
+            subject_name: Name of the subject.
+
         Returns:
-            Structured Syllabus object
+            Structured :class:`~core.models.Syllabus` object.
+
+        Raises:
+            ValueError: If the subject name is invalid after sanitization.
         """
-        prompt = self._create_extraction_prompt(syllabus_text, subject_name)
+        # Sanitize inputs before constructing the prompt
+        clean_syllabus = sanitize_syllabus_text(syllabus_text)
+        clean_subject = validate_subject_name(subject_name)
+
+        prompt = self._create_extraction_prompt(clean_syllabus, clean_subject)
         return self._call_gemini_with_schema(prompt, Syllabus)
     
     def _create_extraction_prompt(self, syllabus_text: str, subject_name: str) -> str:
@@ -129,33 +154,85 @@ Return the result as a valid JSON object matching the following structure:
 }}
 """
 
+    def _extract_retry_delay(self, error: Exception) -> Optional[float]:
+        """Extract retryDelay from Gemini API error message."""
+        try:
+            import re
+            # Look for "retryDelay": "28.9s"
+            match = re.search(r'"retryDelay":\s*"([\d\.]+)s"', str(error))
+            if match:
+                return float(match.group(1))
+        except Exception:
+            pass
+        return None
+
+    def _wait_strategy(self, retry_state: tenacity.RetryCallState) -> float:
+        """Custom wait strategy: use API suggested delay or exponential backoff."""
+        if retry_state.outcome and retry_state.outcome.failed:
+            error = retry_state.outcome.exception()
+            delay = self._extract_retry_delay(error)
+            if delay:
+                logger.info(f"Rate limit hit! Respecting API suggested delay: {delay}s")
+                return delay
+        
+        # Fallback to exponential backoff
+        return wait_exponential(multiplier=2, min=5, max=60)(retry_state)
+
+    @staticmethod
+    def _is_daily_quota_error(error: Exception) -> bool:
+        """Returns True if the error is a daily quota exhaustion (not a per-minute rate limit)."""
+        error_str = str(error)
+        return "GenerateRequestsPerDayPerProjectPerModel" in error_str or "quota" in error_str.lower()
+
+    def _should_retry(self, error: Exception) -> bool:
+        """Retry only per-minute rate limits (429 RPM), not daily quota exhaustion."""
+        if not isinstance(error, APIError):
+            return False
+        if "429" not in str(error) and "503" not in str(error):
+            return False
+        # Do NOT retry daily quota errors — they won't recover within the session
+        if self._is_daily_quota_error(error):
+            logger.error(
+                "Daily API quota exhausted. Stopping retries. "
+                "Consider upgrading or waiting until the quota resets."
+            )
+            return False
+        return True
+
     def _call_gemini_with_schema(self, prompt: str, schema_cls: Any) -> Any:
         """
         Call Gemini model and parse the response into a Pydantic model.
-        Uses local caching to reduce calls.
+        Uses local caching to reduce calls and tenacity for robust retries.
         """
         # 1. Check Cache
         cached_text = self.cache.get(prompt, self.model_name)
         if cached_text:
              response_text = cached_text
         else:
-            # 2. Call API
+            # 2. Call API with retries
             try:
-                # Using the new SDK's generate_content method
-                response = self.client.models.generate_content(
-                    model=self.model_name,
-                    contents=prompt,
-                    config=types.GenerateContentConfig(
-                        response_mime_type="application/json",
-                        #tools=[types.Tool(google_search=types.GoogleSearch())],
+                # We use a functional retry to handle dynamic waits better
+                for attempt in tenacity.Retrying(
+                    retry=retry_if_exception(self._should_retry),
+                    wait=self._wait_strategy,
+                    stop=stop_after_attempt(5),
+                    reraise=True
+                ):
+                    with attempt:
+                        # Using the new SDK's generate_content method
+                        response = self.client.models.generate_content(
+                            model=self.model_name,
+                            contents=prompt,
+                            config=types.GenerateContentConfig(
+                                response_mime_type="application/json",
+                            )
                         )
-                )
-                response_text = response.text
+                        response_text = response.text
+                
                 # 3. Save to Cache
                 self.cache.set(prompt, self.model_name, response_text)
             except Exception as e:
-                logger.error(f"Gemini API call failed: {e}")
-                # Fallback or re-raise. For now, re-raise to be handled by caller
+                logger.error(f"Gemini API call failed after retries: {e}")
                 raise e
 
         # 4. Parse Response

@@ -1,6 +1,20 @@
 # 🚀 Quick Start Guide
 
-Get started with the AI Learning Engine v2.0 in 5 minutes!
+Get started with the AI Learning Engine in 5 minutes!
+
+```mermaid
+flowchart LR
+    A[1. Install & Setup] --> B[2. create-subject]
+    B --> C[3. generate-mindmap-v2]
+    C --> D[4. ingest-paper]
+    D --> E[5. get-pyq-answers]
+    
+    style A fill:#4a148c,stroke:#ab47bc,color:#fff
+    style B fill:#004d40,stroke:#26a69a,color:#fff
+    style C fill:#0d47a1,stroke:#42a5f5,color:#fff
+    style D fill:#e65100,stroke:#ffa726,color:#fff
+    style E fill:#b71c1c,stroke:#ef5350,color:#fff
+```
 
 ## Prerequisites
 - Python 3.10+
@@ -40,35 +54,36 @@ python cli.py create-subject "Computer Networks" --syllabus-file syllabus.txt
 *The AI will generate a structured `Module -> Topic` hierarchy and create Markdown notes in `data/subjects/computer_networks/notes`.*
 
 ### 2. Study & Visualize
-Generate a visual map of your curriculum:
+Generate a visual map of your curriculum. You can target a single module to save time:
 
 ```bash
-python cli.py generate-mindmap-v2
+python cli.py generate-mindmap-v2 --module 1
 ```
-*Open the generated `.mmd` file in [Mermaid Live Editor](https://mermaid.live).*
+*This uses Gemini to generate conceptual relationship maps saved as `<topic>_mermaid.md`.*
 
-### 3. Deepen Understanding with YouTube
-Found a good lecture? Quiz yourself on it immediately.
+### 3. Solve Previous Papers
+Ingest a question paper to prioritize your study:
 
 ```bash
-python cli.py quiz-youtube "https://www.youtube.com/watch?v=..." --num 5 --save
+python cli.py ingest-paper "path/to/2024_ktv.pdf" ktu
 ```
+*The system maps questions to your syllabus and enriches your notes.*
 
-### 4. Interactive Exploration
-Launch the web dashboard to explore notes and take quizzes graphically.
+Now, solve specific questions interactively:
 
 ```bash
-python cli.py run-web
+python cli.py get-pyq-answers --module 3
 ```
+*You will see a table of questions; select the ones you want to solve by index.*
 
 ## Useful Commands
 
 | Command | Description |
 |---------|-------------|
 | `python cli.py` | Enter interactive mode (type `help` to see options) |
-| `python cli.py list-subjects` | View all your subjects |
-| `python cli.py save-notes` | Regenerate Markdown notes for the active subject |
-| `python cli.py ask-youtube` | Ask a specific question to a video |
+| `python cli.py ingest-paper` | Map PDF questions to syllabus & notes |
+| `python cli.py get-pyq-answers` | Generate AI solutions for paper questions |
+| `python cli.py generate-mindmap-v2` | Create Gemini-powered conceptual diagrams |
 
 ## Next Steps
 - Read [WORKFLOW_AND_DATA.md](WORKFLOW_AND_DATA.md) for detailed data flow.

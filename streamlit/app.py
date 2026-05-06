@@ -11,6 +11,10 @@ sys.path.insert(0, str(Path(__file__).parent.parent))
 from core import KnowledgeBase, Topic, Question, create_acronym_mnemonic, get_example_difference, get_subject_dir, load_syllabus_from_json
 from visual import MindMapGenerator
 from viz_utils import plot_questions_per_module, plot_marks_distribution, analyze_repeated_questions
+from ui.progress import show_progress_page
+from ui.pomodoro import show_pomodoro_page
+from ui.todos import show_todo_page
+from ui.flashcards import show_flashcards_page
 import json
 
 def main():
@@ -66,13 +70,51 @@ def main():
     else:
         st.sidebar.warning("No subjects found. Use CLI to create one.")
 
-    page = st.sidebar.radio(
-        "Choose a page:",
-        ["📚 Topics", "🗺️ Mind Map", "📝 Question Bank", "❓ Quiz Mode", "📊 Differences", "🎬 Animations", "➕ Add Content", "⚙️ Settings"]
+    # Custom Navigation
+    st.sidebar.markdown("---")
+    
+    # 1. Select Section
+    nav_section = st.sidebar.radio(
+        "Section",
+        ["📖 Learning", "🎮 Gamification", "🤖 AI", "⚙️ Admin"],
+        horizontal=True,
+        label_visibility="collapsed"
     )
     
+    st.sidebar.markdown("---")
+    
+    # 2. Define pages per section
+    sections = {
+        "📖 Learning": ["📚 Topics", "🗺️ Mind Map", "📝 Question Bank", "❓ Quiz Mode", "🎬 Animations", "📊 Differences"],
+        "🎮 Gamification": ["🏆 My Progress", "🍅 Pomodoro", "✅ Tasks", "🎴 Flashcards"],
+        "🤖 AI": ["💬 AI Chat"],
+        "⚙️ Admin": ["➕ Add Content", "⚙️ Settings"]
+    }
+    
+    available_pages = sections.get(nav_section, sections["📖 Learning"])
+    
+    # 3. Select Page
+    # Use a unique key based on section to reset selection when section changes? 
+    # Or just let it persist?
+    # Better: If we switch section, defaulting to first item is usually expected.
+    # But Streamlit's radio persists index if possible.
+    
+    page = st.sidebar.radio(
+        "Go to:",
+        available_pages,
+        label_visibility="collapsed"
+    )
+
     if page == "📚 Topics":
         show_topics_page()
+    elif page == "🏆 My Progress":
+        show_progress_page()
+    elif page == "🍅 Pomodoro":
+        show_pomodoro_page()
+    elif page == "✅ Tasks":
+        show_todo_page()
+    elif page == "🎴 Flashcards":
+        show_flashcards_page()
     elif page == "🗺️ Mind Map":
         show_mindmap_page()
     elif page == "📝 Question Bank":
@@ -87,6 +129,8 @@ def main():
         show_add_content_page()
     elif page == "⚙️ Settings":
         show_settings_page()
+    elif page == "💬 AI Chat":
+        show_ai_chat_page()
 
 
 def get_current_subject():
@@ -97,6 +141,26 @@ def get_current_subject():
     except:
         pass
     return None
+
+def get_current_syllabus_data():
+    """Helper to load current subject and syllabus."""
+    subject_name = get_current_subject()
+    if not subject_name: return None, None
+    
+    subjects_file = "data/subjects/subjects.json"
+    if not Path(subjects_file).exists(): return None, None
+    
+    with open(subjects_file, 'r') as f:
+        subjects_data = json.load(f)
+        
+    subject_info = next((s for s in subjects_data if s["name"] == subject_name), None)
+    if not subject_info: return None, None
+    
+    syllabus_path = subject_info.get("syllabus_path")
+    if not syllabus_path or not Path(syllabus_path).exists(): return None, None
+    
+    return subject_name, load_syllabus_from_json(syllabus_path)
+
 
 def get_mermaid_content(topic_name):
     """Finds the mermaid markdown file for a topic."""
@@ -547,109 +611,127 @@ def show_mindmap_page():
 
 def show_quiz_page():
     st.header("❓ Quiz Mode")
+    subject_name, syllabus = get_current_syllabus_data()
     
-    topics = st.session_state.kb.get_topics()
-    
-    if not topics:
-        st.warning("No topics found. Add some topics first!")
+    if not syllabus:
+        st.warning("⚠️ Please select a subject from the sidebar first!")
         return
     
-    # Topic selection
-    topic_names = [topic.name for topic in topics]
-    selected_topic = st.selectbox("Select a topic:", ["All Topics"] + topic_names)
+    # --- Hierarchy Selection ---
+    col1, col2 = st.columns(2)
+    with col1:
+        modules = ["All Modules"] + [m.name for m in syllabus.modules]
+        selected_module_name = st.selectbox("Select Module", modules, key="quiz_module")
     
-    # Get questions
-    if selected_topic == "All Topics":
+    with col2:
+        topics = ["All Topics"]
+        if selected_module_name != "All Modules":
+            mod = next((m for m in syllabus.modules if m.name == selected_module_name), None)
+            if mod:
+                topics += [t.name for t in mod.topics]
+        
+        selected_topic_name = st.selectbox("Select Topic", topics, key="quiz_topic")
+
+    # --- Question Fetching ---
+    if selected_topic_name != "All Topics":
+        questions = st.session_state.kb.get_questions(topic=selected_topic_name)
+    else:
         questions = st.session_state.kb.get_questions()
-    else:
-        questions = st.session_state.kb.get_questions(selected_topic)
-    
+        if selected_module_name != "All Modules":
+             # Filter by valid topics
+             pass 
+
     if not questions:
-        st.info("No questions available for this topic yet.")
+        st.info("No questions available for this selection.")
         return
     
-    # Quiz interface
-    if st.session_state.current_question_idx < len(questions):
-        q = questions[st.session_state.current_question_idx]
+    # Quiz Interface
+    if "quiz_idx" not in st.session_state: st.session_state.quiz_idx = 0
+    
+    if st.session_state.quiz_idx < len(questions):
+        idx = st.session_state.quiz_idx
+        q = questions[idx]
         
-        st.markdown(f"### Question {st.session_state.current_question_idx + 1} of {len(questions)}")
-        st.markdown(f"**Topic:** {q.topic}")
-        st.markdown(f"**Difficulty:** {q.difficulty}")
-        st.markdown(f"**Question:** {q.question}")
+        st.progress((idx + 1) / len(questions))
+        st.markdown(f"**Question {idx + 1}/{len(questions)}** ({q.difficulty})")
+        st.markdown(f"### {q.question}")
         
-        # Answer input
-        user_answer = st.text_area("Your answer:", key=f"answer_{st.session_state.current_question_idx}")
+        with st.expander("Show Answer"):
+             st.success(f"**Answer:** {q.answer}")
         
-        col1, col2 = st.columns(2)
-        with col1:
-            if st.button("Show Answer"):
-                st.success(f"**Correct Answer:** {q.answer}")
-        
-        with col2:
-            if st.button("Next Question"):
-                st.session_state.current_question_idx += 1
-                st.rerun()
+        if st.button("Next ➡️", key=f"next_{idx}"):
+            st.session_state.quiz_idx += 1
+            st.rerun()
     else:
-        st.success("Quiz completed! 🎉")
-        if st.button("Restart Quiz"):
-            st.session_state.current_question_idx = 0
+        st.success("🎉 Quiz Completed!")
+        if st.button("Restart"):
+            st.session_state.quiz_idx = 0
             st.rerun()
 
 
 def show_differences_page():
     st.header("📊 Learning with Contrasts")
+    subject_name, syllabus = get_current_syllabus_data()
     
-    st.markdown("Compare and contrast concepts to understand them better!")
+    if not syllabus:
+        st.warning("Please select a subject first.")
+        return
+
+    # Hierarchy
+    modules = [m.name for m in syllabus.modules]
+    selected_module_name = st.selectbox("Module", modules, key="diff_module")
     
-    # Show example differences
-    examples = ["tcp_vs_udp", "stack_vs_queue"]
-    selected_example = st.selectbox("Select an example:", examples)
+    mod = next((m for m in syllabus.modules if m.name == selected_module_name), None)
+    topics = [t.name for t in mod.topics] if mod else []
+    selected_topic_name = st.selectbox("Topic", topics, key="diff_topic")
     
-    diff = get_example_difference(selected_example)
+    st.divider()
+    st.markdown("### Generate Comparison")
     
-    if diff:
-        st.markdown(f"### {diff.concept_a} vs {diff.concept_b}")
+    col1, col2 = st.columns(2)
+    with col1:
+        concept_a = st.text_input("Concept A", key="diff_a")
+    with col2:
+        concept_b = st.text_input("Concept B", key="diff_b")
         
-        # Create a comparison table
-        import pandas as pd
-        
-        data = []
-        for item in diff.differences:
-            data.append({
-                "Aspect": item["aspect"],
-                diff.concept_a: item["concept_a_value"],
-                diff.concept_b: item["concept_b_value"]
-            })
-        
-        df = pd.DataFrame(data)
-        st.table(df)
+    if st.button("✨ Generate Differences Table"):
+        if concept_a and concept_b:
+            with st.spinner("Analyzing differences..."):
+                diff = create_difference_table(f"{concept_a} vs {concept_b}", selected_topic_name)
+                # Display table
+                items = [{"Aspect": d["aspect"], concept_a: d["concept_a_value"], concept_b: d["concept_b_value"]} for d in diff.differences]
+                st.table(items)
+        else:
+            st.error("Enter both concepts.")
 
 
 def show_animations_page():
     st.header("🎬 Educational Animations")
+    subject_name, syllabus = get_current_syllabus_data()
     
-    st.markdown("Visual learning through animations!")
+    if not syllabus:
+        st.warning("Select subject.")
+        return
+        
+    modules = [m.name for m in syllabus.modules]
+    selected_module_name = st.selectbox("Module", modules, key="anim_module")
     
-    animation_type = st.selectbox(
-        "Select animation type:",
-        ["TCP 3-Way Handshake", "Stack Operations"]
-    )
-    
-    if st.button("Generate Animation"):
-        with st.spinner("Creating animation..."):
-            try:
-                if animation_type == "TCP 3-Way Handshake":
-                    from visual import create_tcp_handshake_animation
-                    output_path = create_tcp_handshake_animation()
-                    st.success(f"Animation created at {output_path}")
-                elif animation_type == "Stack Operations":
-                    from visual import create_stack_animation
-                    output_path = create_stack_animation()
-                    st.success(f"Animation created at {output_path}")
-                
-                st.info("Animation saved! You can find it in the data/animations directory.")
-            except Exception as e:
-                st.error(f"Error creating animation: {e}")
+    mod = next((m for m in syllabus.modules if m.name == selected_module_name), None)
+    topics = [t.name for t in mod.topics] if mod else []
+    selected_topic_name = st.selectbox("Topic", topics, key="anim_topic")
+
+    if selected_topic_name:
+         path = get_animation_content(selected_topic_name)
+         if path:
+             st.image(path) if path.endswith('.gif') else st.video(path)
+         else:
+             st.info("No animation yet.")
+             if st.button("🎥 Generate Animation"):
+                 # Find summary
+                 topic = next(t for t in mod.topics if t.name == selected_topic_name)
+                 with st.spinner("Animating..."):
+                     generate_topic_animation(topic.name, topic.summary)
+                     st.rerun()
 
 
 def show_add_content_page():
@@ -707,6 +789,75 @@ def show_add_content_page():
                     st.success("Question added successfully!")
                 else:
                     st.error("Please fill in all required fields (*)")
+
+
+def show_ai_chat_page():
+    st.header("💬 AI Study Companion")
+    
+    col1, col2 = st.columns([3, 1])
+    with col1:
+        st.markdown("Your multi-agentic tutor, powered by Ollama and custom learning skills.")
+    with col2:
+        use_frontier = st.toggle("🚀 Frontier AI", value=False, help="Enhance responses with educational insights and deeper reasoning via Free-LLMs.")
+
+    if "chat_history" not in st.session_state:
+        st.session_state.chat_history = []
+    
+    # Session ID for persistence (link to current subject if available)
+    subject = get_current_subject() or "default"
+    session_id = f"st_session_{subject}"
+
+    # Display chat history
+    for message in st.session_state.chat_history:
+        with st.chat_message(message["role"]):
+            st.markdown(message["content"])
+
+    # Chat input
+    if prompt := st.chat_input("Ask me anything about your studies..."):
+        # Display user message
+        with st.chat_message("user"):
+            st.markdown(prompt)
+        
+        st.session_state.chat_history.append({"role": "user", "content": prompt})
+
+        # Placeholder for assistant response
+        with st.chat_message("assistant"):
+            status_container = st.empty()
+            response_container = st.empty()
+            full_response = ""
+
+            # Call backend
+            try:
+                import requests
+                import json
+                
+                # Check for backend server
+                endpoint = "chat/external" if use_frontier else "chat"
+                server_url = f"http://localhost:8765/{endpoint}"
+                
+                with requests.post(
+                    server_url, 
+                    json={"message": prompt, "session_id": session_id}, 
+                    stream=True,
+                    timeout=120
+                ) as r:
+                    for line in r.iter_lines():
+                        if line:
+                            data = json.loads(line.decode('utf-8'))
+                            
+                            if data["type"] == "status":
+                                status_container.info(f"Agent: {data['skill']} - {data['message']}")
+                            elif data["type"] == "content":
+                                full_response += data["content"]
+                                response_container.markdown(full_response + "▌")
+                            elif data["type"] == "done":
+                                response_container.markdown(full_response)
+                                
+                st.session_state.chat_history.append({"role": "assistant", "content": full_response})
+                
+            except Exception as e:
+                st.error(f"Failed to connect to AI server: {e}")
+                st.info("Make sure the MCP server is running at http://localhost:8765")
 
 
 if __name__ == "__main__":

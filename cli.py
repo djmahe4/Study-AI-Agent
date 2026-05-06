@@ -7,7 +7,9 @@ from icecream import ic
 import typer
 import sys
 import platform
+from datetime import datetime
 import json
+import time
 import shlex
 from pathlib import Path
 from typing import Optional
@@ -20,6 +22,9 @@ import google.genai as genai
 import subprocess
 from pydantic import ValidationError
 
+# Load environment variables early
+load_dotenv()
+
 from core import (
     Topic, Syllabus, Question, Subject, KnowledgeBase,
     save_syllabus_to_json, load_syllabus_from_json,
@@ -27,6 +32,10 @@ from core import (
     save_syllabus_to_markdown
 )
 from core.models import ExamPattern, ExamSection, AnalyzedQuestion
+from core.pomodoro import PomodoroTimer
+from core.gamification import GamificationManager
+from core.todo_manager import TodoManager
+from core.flashcards import FlashcardManager
 from core.gemini_processor import GeminiProcessor, create_subject_folder
 from core.rag import RAGEngine
 from core.exam_analysis import QuestionPaperAnalyzer
@@ -37,6 +46,9 @@ from core.utils import get_subject_dir
 app = typer.Typer(help="AI Learning Engine CLI")
 console = Console()
 
+# Persistence Manager
+from core.persistence import get_persistence_manager
+
 # Global state for current subject
 CURRENT_SUBJECT_FILE = "data/.current_subject"
 
@@ -44,6 +56,192 @@ CURRENT_SUBJECT_FILE = "data/.current_subject"
 model = None
 web_proc = None
 client = None
+
+def _enrich_syllabus_from_questions(current_subject: str, questions):
+    """
+    Enrich syllabus.json and markdown notes with data from ingested questions.
+    Maps questions to modules/topics, updates importance_score and questions list.
+    Creates new topics for questions that don't match existing ones.
+    """
+    import re
+    
+    # 1. Load subject data
+    subjects_file = "data/subjects/subjects.json"
+    if not Path(subjects_file).exists():
+        console.print("[yellow]No subjects.json found. Skipping enrichment.[/yellow]")
+        return
+        
+    with open(subjects_file, 'r') as f:
+        subjects = json.load(f)
+    subject_data = next((s for s in subjects if s["name"] == current_subject), None)
+    
+    if not subject_data:
+        console.print(f"[yellow]Subject '{current_subject}' not found. Skipping enrichment.[/yellow]")
+        return
+    
+    syllabus_path = subject_data.get("syllabus_path")
+    if not syllabus_path or not Path(syllabus_path).exists():
+        console.print("[yellow]Syllabus JSON not found. Skipping enrichment.[/yellow]")
+        return
+    
+    # 2. Load syllabus
+    syllabus = load_syllabus_from_json(syllabus_path)
+    
+    # 3. Build module lookup — supports both name-based and numeric matching
+    def _normalize(name: str) -> str:
+        n = name.lower().strip()
+        n = re.sub(r'^module\s*\d+\s*[:\-]\s*', '', n)
+        return n
+    
+    def _extract_module_number(name: str):
+        """Extract numeric module number from name like 'Module 3: Bottom-Up Parsing'."""
+        m = re.search(r'module\s*(\d+)', name, re.IGNORECASE)
+        return m.group(1) if m else None
+    
+    # Map by normalized name, by module number, and by order
+    module_by_name = {}
+    module_by_number = {}
+    module_by_order = {}
+    for module in syllabus.modules:
+        module_by_name[_normalize(module.name)] = module
+        num = _extract_module_number(module.name)
+        if num:
+            module_by_number[num] = module
+        if hasattr(module, 'order') and module.order:
+            module_by_order[str(module.order)] = module
+    
+    def _find_module(q_module_str: str):
+        """Find matching module using multiple strategies."""
+        q_mod = q_module_str.strip()
+        
+        # Strategy 1: Pure numeric — match by module number or order
+        if q_mod.isdigit():
+            if q_mod in module_by_number:
+                return module_by_number[q_mod]
+            if q_mod in module_by_order:
+                return module_by_order[q_mod]
+        
+        # Strategy 2: Exact normalized name match
+        q_norm = _normalize(q_mod)
+        if q_norm in module_by_name:
+            return module_by_name[q_norm]
+        
+        # Strategy 3: Extract number from "Module 3" or similar
+        num = _extract_module_number(q_mod)
+        if num and num in module_by_number:
+            return module_by_number[num]
+        
+        # Strategy 4: Fuzzy substring match
+        for mod_norm, mod_obj in module_by_name.items():
+            if q_norm in mod_norm or mod_norm in q_norm:
+                return mod_obj
+        
+        return None
+    
+    def _score_topic(topic, q_text_lower: str) -> int:
+        """Score how well a question matches a topic."""
+        score = 0
+        # Topic name words (weight=3 for strong identifiers)
+        for word in topic.name.lower().split():
+            if len(word) > 3 and word in q_text_lower:
+                score += 3
+        # Key points (weight=2)
+        for kp in topic.key_points:
+            kp_lower = kp.lower()
+            # Full phrase match is strongest
+            if kp_lower in q_text_lower:
+                score += 5
+            else:
+                for word in kp_lower.split():
+                    if len(word) > 3 and word in q_text_lower:
+                        score += 1
+        # Subtopics (weight=2)
+        for st in topic.subtopics:
+            if st.lower() in q_text_lower:
+                score += 4
+        return score
+    
+    def _derive_topic_name(q_text: str) -> str:
+        """Derive a short topic name from question text."""
+        # Take the first meaningful clause (up to 60 chars)
+        text = q_text.strip()
+        # Remove common question prefixes
+        text = re.sub(r'^(explain|describe|discuss|what\s+is|define|compare|differentiate|illustrate|write\s+a?\s*note\s+on|with\s+an?\s+example)\s*', '', text, flags=re.IGNORECASE)
+        # Take first sentence or up to 60 chars
+        text = text.split('.')[0].split('?')[0].strip()
+        if len(text) > 60:
+            text = text[:57] + "..."
+        return text.capitalize() if text else "Miscellaneous"
+    
+    # 4. Map questions to modules and topics
+    enriched_count = 0
+    new_topics_count = 0
+    MATCH_THRESHOLD = 3  # Minimum score to consider a topic match
+    
+    for q in questions:
+        if not q.module or q.module == "Unknown":
+            continue
+        
+        matched_module = _find_module(q.module)
+        if not matched_module:
+            console.print(f"[dim]  Skipped Q{q.number}: module '{q.module}' not found in syllabus[/dim]")
+            continue
+        
+        # Score each topic
+        q_text_lower = q.text.lower()
+        scored_topics = [(topic, _score_topic(topic, q_text_lower)) for topic in matched_module.topics]
+        scored_topics.sort(key=lambda x: x[1], reverse=True)
+        
+        best_topic = None
+        if scored_topics and scored_topics[0][1] >= MATCH_THRESHOLD:
+            best_topic = scored_topics[0][0]
+        
+        # No good match — create a new topic
+        if not best_topic:
+            new_name = _derive_topic_name(q.text)
+            # Check if we already created a similar topic this run
+            existing_new = None
+            for t in matched_module.topics:
+                if t.name.lower() == new_name.lower():
+                    existing_new = t
+                    break
+            
+            if existing_new:
+                best_topic = existing_new
+            else:
+                best_topic = Topic(
+                    name=new_name,
+                    summary=f"Topic derived from exam question Q{q.number}.",
+                    key_points=[],
+                    questions=[],
+                )
+                matched_module.topics.append(best_topic)
+                new_topics_count += 1
+                console.print(f"[cyan]  + New topic: '{new_name}' in {matched_module.name}[/cyan]")
+        
+        # 5. Enrich the topic
+        q_preview = q.text.strip()[:200]
+        year_tag = f"[{q.year}]" if q.year and q.year != "Unknown" else ""
+        q_entry = f"{year_tag} Q{q.number}: {q_preview}"
+        
+        if q_entry not in best_topic.questions:
+            best_topic.questions.append(q_entry)
+        
+        best_topic.importance_score += q.marks if q.marks > 0 else 1
+        enriched_count += 1
+    
+    if enriched_count == 0:
+        console.print("[yellow]No questions could be mapped to syllabus topics.[/yellow]")
+        return
+    
+    # 6. Save enriched syllabus.json
+    save_syllabus_to_json(syllabus, syllabus_path)
+    console.print(f"[green]✓ Enriched syllabus with {enriched_count} questions ({new_topics_count} new topics created).[/green]")
+    
+    # 7. Update markdown notes (re-generates with enriched data)
+    notes_dir = f"{subject_data['folder_path']}/notes"
+    save_syllabus_to_markdown(syllabus, notes_dir)
+    console.print(f"[green]✓ Updated markdown notes in {notes_dir}[/green]")
 
 @app.command()
 def configure_exam(name: str = typer.Argument(..., help="Name of the exam pattern (e.g. 'University2024')")):
@@ -150,9 +348,8 @@ def ingest_paper(
     for q in questions:
         console.print(f" - Q{q.number} ({q.module}): {q.text[:50]}...")
         
-    # Update Importance (Simple Stub)
-    # TODO: Load syllabus, increment scores based on module frequency
-    console.print("[yellow]Topic importance update pending (requires topic-level mapping, currently at Module level).[/yellow]")
+    # === Enrich syllabus.json with extracted questions ===
+    _enrich_syllabus_from_questions(current_subject, questions)
 
 @app.command()
 def get_pyq_answers(
@@ -177,46 +374,124 @@ def get_pyq_answers(
     
     # Filter
     if module:
-        questions = [q for q in questions if q.module and module.lower() in q.module.lower()]
+        # Re-use normalization logic for robust module filtering
+        import re
+        def _normalize(name: str) -> str:
+            n = (name or "").lower().strip()
+            return re.sub(r'^module\s*\d+\s*[:\-]\s*', '', n)
+        
+        def _extract_module_number(name: str):
+            m = re.search(r'module\s*(\d+)', name or "", re.IGNORECASE)
+            return m.group(1) if m else None
+
+        filtered_qs = []
+        mod_filter_num = module.strip()
+        mod_filter_norm = _normalize(module)
+        
+        for q in questions:
+            q_num = _extract_module_number(q.module)
+            q_norm = _normalize(q.module)
+            
+            # Match by numeric ID (e.g. "--module 1" matches q.module="1" or q.module="Module 1: Intro")
+            if mod_filter_num.isdigit() and (q.module == mod_filter_num or q_num == mod_filter_num):
+                filtered_qs.append(q)
+            # Match by string inclusion
+            elif mod_filter_norm in q_norm or mod_filter_norm in q.module.lower():
+                filtered_qs.append(q)
+                
+        questions = filtered_qs
         
     if not questions:
         console.print("[yellow]No questions found for criteria.[/yellow]")
         return
         
+    # Interactive Selection
+    console.print(f"\n[cyan]Found {len(questions)} matching questions:[/cyan]")
+    table = Table(show_header=True, header_style="bold magenta")
+    table.add_column("No.", style="dim", width=4)
+    table.add_column("Yr", style="cyan", width=6)
+    table.add_column("Mk", style="green", width=4)
+    table.add_column("Module", style="blue")
+    table.add_column("Preview")
+    
+    for i, q in enumerate(questions, 1):
+        year = q.year if q.year and q.year != 'Unknown' else '-'
+        preview = q.text[:60] + "..." if len(q.text) > 60 else q.text
+        table.add_row(str(i), year, str(q.marks), q.module[:15], preview.replace('\n', ' '))
+        
+    console.print(table)
+    
+    selection = typer.prompt("\nEnter question numbers to generate answers for (comma-separated, e.g. 1,3,4) or 'all'", default="all")
+    if selection.lower() != 'all':
+        try:
+            indices = [int(x.strip()) - 1 for x in selection.split(",")]
+            selected_questions = [questions[i] for i in indices if 0 <= i < len(questions)]
+            if not selected_questions:
+                console.print("[red]No valid questions selected. Exiting.[/red]")
+                return
+            questions = selected_questions
+            console.print(f"[green]Selected {len(questions)} questions for generation.[/green]")
+        except ValueError:
+            console.print("[red]Invalid format. Please use comma-separated numbers. Exiting.[/red]")
+            return
+
     # Initialize Analyzer for generation
     load_dotenv()
     analyzer = QuestionPaperAnalyzer(os.getenv("GOOGLE_API_KEY"))
     
     # Process
-    grouped = {}
-    for q in questions:
-        if q.module not in grouped: grouped[q.module] = []
-        grouped[q.module].append(q)
-        
-    subjects_file = "data/subjects/subjects.json"
-    with open(subjects_file, 'r') as f:
-        subjects = json.load(f)
-    subject_data = next((s for s in subjects if s["name"] == current_subject), None)
-    base_dir = subject_path / "notes"
-    map={}
+    # Load syllabus to get correct module names
     with open(f"{subject_path}/syllabus/syllabus.json", 'r') as f:
         syllabus = json.load(f)
-        for i, mod in enumerate(syllabus['modules']):
-            map[mod['name']]=list(grouped.values())[i] if i < len(list(grouped.values())) else []
+    
+    # Initialize map with syllabus modules
+    module_questions_map = {mod['name']: [] for mod in syllabus['modules']}
+    
+    # Assign questions to modules
+    for q in questions:
+        # 1. Try exact match
+        if q.module in module_questions_map:
+            module_questions_map[q.module].append(q)
+            continue
+            
+        # 2. Try fuzzy match (case insensitive)
+        found = False
+        for mod_name in module_questions_map.keys():
+            if mod_name.lower() == q.module.lower():
+                module_questions_map[mod_name].append(q)
+                found = True
+                break
+        if found: continue
 
-    for mod_name, qs in map.items():
-        if not mod_name or mod_name == "Unknown": continue
-        
-        # Find module directory
-        # Heuristic: Find dir that contains mod_name
-        # The folders are named "1. Module Name" or similar.
-        found_dir = None
-        for p in base_dir.iterdir():
-            if p.is_dir() and mod_name.lower() in p.name.lower():
-                found_dir = p
+        # 3. Fallback: Check if q.module is a substring or vice versa
+        for mod_name in module_questions_map.keys():
+            if mod_name.lower() in q.module.lower() or q.module.lower() in mod_name.lower():
+                module_questions_map[mod_name].append(q)
+                found = True
                 break
         
-        if not found_dir:
+        if not found:
+            console.print(f"[yellow]Warning: Could not map question (Mod: {q.module}) to any syllabus module.[/yellow]")
+
+    base_dir = subject_path / "notes"
+
+    for mod_name, qs in module_questions_map.items():
+        if not qs: continue
+        
+        # Find module directory
+        # 1. Precise lookup (matching save_syllabus_to_markdown logic)
+        safe_mod_name = mod_name.replace(":", " -").replace("/", "-").strip()
+        found_dir = base_dir / safe_mod_name
+        
+        # 2. Fallback: Fuzzy search
+        if not found_dir.exists():
+            found_dir = None
+            for p in base_dir.iterdir():
+                if p.is_dir() and mod_name.lower() in p.name.lower():
+                    found_dir = p
+                    break
+        
+        if not found_dir or not found_dir.exists():
             console.print(f"[yellow]Could not find folder for module '{mod_name}'[/yellow]")
             continue
             
@@ -228,15 +503,82 @@ def get_pyq_answers(
             f.write(f"\n# Previous Year Questions & Solutions\n")
             f.write(f"Generated on {os.getenv('DATE', 'Today')}\n\n")
             
-            for q in qs:
-                # Token Optimization: Check if answer roughly exists? No, just append.
-                ans = analyzer.generate_answer(q) # Context could be added here by reading topic notes
+            for i, q in enumerate(qs, 1):
+                console.print(f"  [dim]Generating Q{q.number}...[/dim]")
+                ans = analyzer.generate_answer(q) 
                 f.write(f"### Q{q.number} ({q.year}): {q.text}\n")
                 f.write(f"**Marks:** {q.marks}\n\n")
                 f.write(f"{ans}\n\n")
                 f.write("---\n")
                 
+                # Rate limit throttle: sleep 15s to respect 5 RPM
+                time.sleep(15)
+                
         console.print(f"[green]Saved solutions to {output_file}[/green]")
+
+@app.command()
+def generate_skills(
+    subject: Optional[str] = typer.Option(None, help="Subject name to generate skills for"),
+    module: Optional[str] = typer.Option(None, help="Specific module to target"),
+):
+    """
+    Transform subject notes and PYQ solutions into structured Agent Skills.
+    """
+    current_subject = subject or _get_current_subject()
+    if not current_subject:
+        console.print("[red]No subject selected. Please select a subject or provide --subject.[/red]")
+        return
+        
+    # Get available modules
+    from core.utils import get_subject_dir
+    notes_dir = get_subject_dir(current_subject) / "notes"
+    
+    selected_module = module
+    if not selected_module and notes_dir.exists():
+        modules = [d.name for d in notes_dir.iterdir() if d.is_dir()]
+        if modules:
+            console.print(f"\n[bold cyan]Available modules for {current_subject}:[/bold cyan]")
+            for i, mod in enumerate(modules, 1):
+                console.print(f"  {i}. {mod}")
+            console.print(f"  {len(modules) + 1}. [All Modules]")
+            
+            choice = typer.prompt("\nSelect a module number to scaffold skills (or 0 to cancel)", type=int, default=len(modules) + 1)
+            if choice == 0:
+                return
+            if choice <= len(modules):
+                selected_module = modules[choice - 1]
+            else:
+                selected_module = None # Process all
+        
+    msg = f"[START] Initializing Skill Factory for: {current_subject}"
+    if selected_module:
+        msg += f" (Module: {selected_module})"
+    else:
+        msg += " (All Modules)"
+        
+    console.print(f"[cyan]{msg}[/cyan]")
+    console.print("[yellow]Analyzing notes and solutions to scaffold skills. This involves LLM processing...[/yellow]")
+    
+    from core.skill_generator import generate_skills_for_subject
+    
+    with console.status("[bold blue]Generating skills..."):
+        stats = generate_skills_for_subject(current_subject, selected_module)
+        
+    console.print(f"\n[bold green]✓ Skill Factory complete for {current_subject}![/bold green]")
+    
+    # Display Summary Table
+    table = Table(title="Generation Summary", box=None, header_style="bold magenta")
+    table.add_column("Category", style="cyan")
+    table.add_column("Count", style="white", justify="right")
+    
+    table.add_row("Total Files Found", str(stats.get("total", 0)))
+    table.add_row("New Skills Created", f"[green]{stats.get('created', 0)}[/green]")
+    table.add_row("Cache Hits", f"[blue]{stats.get('cache_hits', 0)}[/blue]")
+    table.add_row("Failed", f"[red]{stats.get('failed', 0)}[/red]")
+    
+    console.print(table)
+    console.print(f"\n[dim]New skills are available in the 'skills/{current_subject.lower().replace(' ', '_')}' directory.[/dim]")
+
 
 @app.command()
 def help():
@@ -259,7 +601,7 @@ def help():
         "[bold yellow]2. Create:[/bold yellow]     [green]create-subject[/green] (AI extracts modules, topics & creates markdown notes)",
         "[bold yellow]3. Prioritize:[/bold yellow] [green]ingest-paper[/green] (Analyze importance from previous year papers)",
         "[bold yellow]4. Study:[/bold yellow]      [green]save-notes[/green] (Generate MD) -> Review in [dim]data/subjects/<subj>/notes[/dim]",
-        "[bold yellow]5. Deepen:[/bold yellow]     [green]ask-youtube[/green], [green]quiz-youtube[/green], [green]create-mnemonic[/green]",
+        "[bold yellow]5. Deepen:[/bold yellow]     [green]get-pyq-answers[/green] (Answer PYQs) -> [green]generate-skills[/green] (Build Agent Skills)",
         "[bold yellow]6. Visualize:[/bold yellow]  [green]generate-mindmap-v2[/green] (Mermaid), [green]run-web[/green] (Explorer)"
     ]
     
@@ -279,9 +621,12 @@ def help():
     table.add_row("📁 Subjects", "create-subject, list-subjects, select-subject, delete-subject")
     table.add_row("📝 Content", "configure-exam, save-notes, add-topic, list-topics, load-syllabus, export-syllabus")
     table.add_row("📺 YouTube", "ask-youtube, quiz-youtube")
-    table.add_row("🧠 Study", "add-question, list-questions, create-mnemonic, show-difference, ingest-paper, get-pyq-answers")
+    table.add_row("🧠 Study", "add-question, list-questions, create-mnemonic, show-difference, ingest-paper, get-pyq-answers, generate-skills")
     table.add_row("🎨 Visuals", "generate-mindmap, generate-mindmap-v2, create-animation")
-    table.add_row("⚙️ System", "init, run-web, stop-web, set-api-key, exit")
+    table.add_row("🎮 Gamification", "pomodoro, progress")
+    table.add_row("✅ Tasks", "todo-add, todo-list, todo-complete")
+    table.add_row("🎴 Flashcards", "flashcard-create-deck, flashcard-add, flashcard-study")
+    table.add_row("⚙️ System", "backup-list, backup-restore, init, run-web, stop-web, set-api-key, exit")
 
     console.print(table)
     
@@ -294,29 +639,16 @@ def help():
 @app.command()
 def generate_mindmap_v2(
     scope: str = typer.Option("subject", help="Scope: 'subject' (all topics in current subject) or 'global'"),
+    module: Optional[int] = typer.Option(None, "--module", "-m", help="Module number to generate diagrams for (e.g. 1, 2, 3)"),
     output_file: str = "mindmap.mmd"
 ):
     """
     Generate Mermaid mindmaps.
     If scope is 'subject', generates <topic>_mermaid.md for each topic in the current subject.
     If scope is 'global', generates a single mindmap for all topics.
+    Use --module N to generate only for a specific module.
     """
-    kb = KnowledgeBase()
-    
-    if scope == "global":
-        topics = kb.get_topics()
-        if not topics:
-            console.print("[yellow]No topics found.[/yellow]")
-            return
-        try:
-            generator = MindMapGenerator2(topics)
-            output_path = generator.save(output_file)
-            console.print(f"[bold green]Global Mermaid mind map generated at: {output_path}[/bold green]")
-        except Exception as e:
-            console.print(f"[red]Failed to generate mind map: {e}[/red]")
-        return
-
-    # Subject Scope
+    # Subject Scope check (required for both 'subject' and 'global' now)
     current_subject = _get_current_subject()
     if not current_subject:
         console.print("[red]No subject selected. Use 'select-subject' first.[/red]")
@@ -327,34 +659,101 @@ def generate_mindmap_v2(
         subjects = json.load(f)
     subject_data = next((s for s in subjects if s["name"] == current_subject), None)
     
-    if not subject_data: return
+    if not subject_data: 
+        console.print(f"[red]Subject '{current_subject}' data not found.[/red]")
+        return
 
     syllabus_path = subject_data.get("syllabus_path")
     syllabus = load_syllabus_from_json(syllabus_path)
-    
-    count = 0
-    with console.status(f"[cyan]Generating mindmaps for {current_subject}...[/cyan]"):
-        base_dir = Path(subject_data['folder_path']) / "notes"
-        
-        for i, module in enumerate(syllabus.modules, 1):
-            safe_mod_name = module.name.replace(":", " -").replace("/", "-").strip()
+
+    # Filter modules if --module is specified
+    if module is not None:
+        selected_modules = [m for m in syllabus.modules if getattr(m, 'order', 0) == module]
+        if not selected_modules:
+            # Fallback: try by 1-based index
+            if 1 <= module <= len(syllabus.modules):
+                selected_modules = [syllabus.modules[module - 1]]
+            else:
+                console.print(f"[red]Module {module} not found. Available: 1-{len(syllabus.modules)}[/red]")
+                return
+        console.print(f"[cyan]Generating diagrams for Module {module}: {selected_modules[0].name}[/cyan]")
+    else:
+        selected_modules = syllabus.modules
+
+    if scope == "global":
+        # 'global' scope now means 'all modules/topics in the current subject'
+        # Collect all topics from the syllabus
+        topics = []
+        for mod in selected_modules:
+            topics.extend(mod.topics)
             
-            for j, topic in enumerate(module.topics, 1):
-                safe_topic_name = topic.name.replace("/", "-").strip()
-                safe_topic_name = "".join([c for c in safe_topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+        if not topics:
+            console.print("[yellow]No topics found in syllabus.[/yellow]")
+            return
+        try:
+            generator = MindMapGenerator2(topics)
+            output_path = generator.save(output_file)
+            console.print(f"[bold green]Global mind map for '{current_subject}' generated at: {output_path}[/bold green]")
+        except Exception as e:
+            console.print(f"[red]Failed to generate mind map: {e}[/red]")
+        return
+
+    # Subject Scope — generate AI diagrams per topic
+    load_dotenv()
+    api_key = os.getenv("GOOGLE_API_KEY")
+    if not api_key:
+        console.print("[red]GOOGLE_API_KEY not found. Set it first.[/red]")
+        return
+
+    from core.diagram_generator import MermaidDiagramGenerator
+    diagram_gen = MermaidDiagramGenerator(api_key)
+
+    count = 0
+    total_topics = sum(len(m.topics) for m in selected_modules)
+    base_dir = Path(subject_data['folder_path']) / "notes"
+    
+    for i, mod in enumerate(selected_modules, 1):
+        safe_mod_name = mod.name.replace(":", " -").replace("/", "-").strip()
+        
+        for j, topic in enumerate(mod.topics, 1):
+            safe_topic_name = topic.name.replace("/", "-").strip()
+            safe_topic_name = "".join([c for c in safe_topic_name if c.isalpha() or c.isdigit() or c in (' ', '-', '_')]).strip()
+            
+            # Read the topic's notes markdown file
+            notes_file = base_dir / safe_mod_name / f"{j}. {safe_topic_name}.md"
+            mermaid_file = base_dir / safe_mod_name / f"{j}. {safe_topic_name}_mermaid.md"
+            
+            if notes_file.exists():
+                with open(notes_file, 'r', encoding='utf-8') as f:
+                    markdown_content = f.read()
+            else:
+                # Fallback to summary + key_points if notes file missing
+                markdown_content = f"# {topic.name}\n\n**Summary:** {topic.summary}\n"
+                if topic.key_points:
+                    markdown_content += "\n## Key Points\n" + "\n".join(f"- {kp}" for kp in topic.key_points)
+            
+            count += 1
+            console.print(f"  [{count}/{total_topics}] Generating diagrams for [cyan]{topic.name}[/cyan]...")
+            
+            try:
+                diagram_set = diagram_gen.generate_diagrams(
+                    topic_name=topic.name,
+                    markdown_content=markdown_content,
+                    module_name=mod.name,
+                    subject_name=current_subject
+                )
+                MindMapGenerator2.save_ai_diagrams_as_markdown(str(mermaid_file), diagram_set)
+                n_diags = len(diagram_set.diagrams)
+                console.print(f"    [green]✓ {n_diags} diagram(s) saved[/green]")
+            except Exception as e:
+                console.print(f"    [red]✗ Error: {e}[/red]")
+
+            
+            # Rate limit: 15s between topics (5 RPM)
+            if count < total_topics:
+                time.sleep(15)
                 
-                # Construct path
-                file_path = base_dir / safe_mod_name / f"{j}. {safe_topic_name}_mermaid.md"
-                
-                # Generate
-                # Create a single-topic generator for focused map
-                # or pass relevant connected topics? For now, just the topic itself.
-                # Actually MindMapGenerator2 takes a list.
-                generator = MindMapGenerator2([topic])
-                generator.save_as_markdown(str(file_path), title=f"Mindmap: {topic.name}")
-                count += 1
-                
-    console.print(f"[bold green]Generated {count} mindmaps in {base_dir}[/bold green]")
+    console.print(f"[bold green]Generated conceptual diagrams for {count} topics in {base_dir}[/bold green]")
 
 @app.command()
 def save_notes(output_file: Optional[str] = None):
@@ -389,7 +788,7 @@ def save_notes(output_file: Optional[str] = None):
         syllabus = load_syllabus_from_json(syllabus_path)
         
         if not output_file:
-            output_file = f"{subject_data['folder_path']}/notes.md"
+            output_file = f"{subject_data['folder_path']}/notes"
             
         save_syllabus_to_markdown(syllabus, output_file)
         console.print(f"[bold green]Notes saved to: {output_file}[/bold green]")
@@ -647,8 +1046,16 @@ def create_subject(
                 end_hint = "Ctrl+Z then Enter"
             else:
                 end_hint = "Ctrl+D"
-            sys.stdout.write(f"[yellow]Enter syllabus text ({end_hint} to finish):[/yellow]\n")
-            syllabus_text = sys.stdin.read()
+            sys.stdout.write(f"[yellow]Enter syllabus text ({end_hint} or empty line + Enter to finish):[/yellow]\n")
+            lines = []
+            while True:
+                line = sys.stdin.readline()
+                if not line: # EOF
+                    break
+                if not line.strip() and lines: # Empty line after some content finishes input
+                    break
+                lines.append(line)
+            syllabus_text = "".join(lines)
         except KeyboardInterrupt:
             console.print("[red]Input cancelled by user.[/red]")
             syllabus_text = ""
@@ -932,38 +1339,163 @@ def add_question(
 ):
     """Add a question to the knowledge base."""
     kb = KnowledgeBase()
+    current_subject = _get_current_subject()
     
+    # Try to resolve module from the syllabus if subject is selected
+    module_name = None
+    if current_subject:
+        resolved_module, _ = _find_topic_path(current_subject, topic)
+        module_name = resolved_module
+
     q = Question(
         topic=topic,
+        subject=current_subject,
+        module=module_name,
         question=question,
         answer=answer,
         difficulty=difficulty
     )
     
     kb.save_question(q)
-    console.print(f"[green]Question added for topic '{topic}'![/green]")
+    
+    msg = f"[green]Question added for topic '{topic}'"
+    if current_subject:
+        msg += f" in subject '{current_subject}'"
+    if module_name:
+        msg += f" ({module_name})"
+    msg += "![/green]"
+    
+    console.print(msg)
 
 
 @app.command()
-def list_questions(topic: Optional[str] = None):
-    """List questions, optionally filtered by topic."""
+def list_questions(
+    topic: Optional[str] = typer.Option(None, "--topic", "-t", help="Filter by topic"),
+    module: Optional[str] = typer.Option(None, "--module", "-m", help="Filter by module"),
+    all_subjects: bool = typer.Option(False, "--all", help="Show questions from all subjects")
+):
+    """List questions from both knowledge base and subject-specific question bank."""
     kb = KnowledgeBase()
-    questions = kb.get_questions(topic)
+    current_subject = _get_current_subject()
     
-    if not questions:
+    # Target subject for filtering
+    target_subject = None if all_subjects else current_subject
+
+    # Source 1: Manual questions from SQLite
+    manual_questions = kb.get_questions(topic=topic, subject=target_subject, module=module)
+    
+    # Source 2: Analyzed questions from JSON bank
+    analyzed_questions = []
+    
+    def normalize_mod(m):
+        if not m: return ""
+        m = str(m).lower().strip()
+        if m.startswith("module "):
+            m = m[7:].strip()
+        return m
+
+    norm_module = normalize_mod(module) if module else None
+
+    if target_subject:
+        # Fetch for current subject
+        raw_analyzed = kb.get_analyzed_questions(target_subject)
+        for q_dict in raw_analyzed:
+            q_module = q_dict.get("module")
+            q_topic = q_dict.get("topic")
+            
+            # Normalize q_module for matching
+            norm_q_mod = normalize_mod(q_module)
+            
+            # Apply filters
+            if topic and q_topic and topic.lower() not in q_topic.lower():
+                continue
+            if norm_module and norm_q_mod and norm_module != norm_q_mod:
+                continue
+            
+            analyzed_questions.append({
+                "source": "Bank",
+                "subject": target_subject,
+                "module": q_module or "N/A",
+                "topic": q_topic or "N/A",
+                "question": q_dict.get("text", "N/A"),
+                "difficulty": f"Marks: {q_dict.get('marks', '?')}" if q_dict.get('marks') else "N/A"
+            })
+    elif all_subjects:
+        # Fetch for all subjects
+        subjects_file = "data/subjects/subjects.json"
+        if Path(subjects_file).exists():
+            with open(subjects_file, 'r') as f:
+                subjects = json.load(f)
+                for s in subjects:
+                    s_name = s["name"]
+                    raw_analyzed = kb.get_analyzed_questions(s_name)
+                    for q_dict in raw_analyzed:
+                        q_module = q_dict.get("module")
+                        q_topic = q_dict.get("topic")
+                        
+                        norm_q_mod = normalize_mod(q_module)
+                        
+                        if topic and q_topic and topic.lower() not in q_topic.lower():
+                            continue
+                        if norm_module and norm_q_mod and norm_module != norm_q_mod:
+                            continue
+                            
+                        analyzed_questions.append({
+                            "source": "Bank",
+                            "subject": s_name,
+                            "module": q_module or "N/A",
+                            "topic": q_topic or "N/A",
+                            "question": q_dict.get("text", "N/A"),
+                            "difficulty": f"Marks: {q_dict.get('marks', '?')}" if q_dict.get('marks') else "N/A"
+                        })
+
+    # Combine and convert manual questions to the same display format
+    for q in manual_questions:
+        q_module = q.module
+        q_topic = q.topic
+        
+        norm_q_mod = normalize_mod(q_module)
+        
+        # Apply module filter if not already filtered by kb.get_questions (which might be too strict)
+        if norm_module and norm_q_mod and norm_module != norm_q_mod:
+            continue
+
+        analyzed_questions.append({
+            "source": "Manual",
+            "subject": q.subject or "N/A",
+            "module": q_module or "N/A",
+            "topic": q_topic or "N/A",
+            "question": q.question,
+            "difficulty": q.difficulty
+        })
+
+    display_list = analyzed_questions
+    
+    if not display_list:
         console.print("[yellow]No questions found.[/yellow]")
         return
     
-    table = Table(title=f"Questions{' for ' + topic if topic else ''}")
+    title = "Questions"
+    if topic: title += f" for '{topic}'"
+    if module: title += f" in module '{module}'"
+    if target_subject: title += f" of subject '{target_subject}'"
+    
+    table = Table(title=title)
+    table.add_column("Src", style="dim")
+    table.add_column("Subject", style="blue")
+    table.add_column("Module", style="magenta")
     table.add_column("Topic", style="cyan")
     table.add_column("Question", style="green")
-    table.add_column("Difficulty", style="yellow")
+    table.add_column("Meta", style="yellow")
     
-    for q in questions:
+    for q in display_list:
         table.add_row(
-            q.topic,
-            q.question[:60] + "..." if len(q.question) > 60 else q.question,
-            q.difficulty
+            q["source"],
+            q["subject"],
+            q["module"],
+            q["topic"],
+            q["question"][:60] + "..." if len(q["question"]) > 60 else q["question"],
+            q["difficulty"]
         )
     
     console.print(table)
@@ -999,8 +1531,11 @@ def run_web():
     """Run the web interface."""
     console.print("[cyan]Starting web interface...[/cyan]")
     try:
-        #web_proc=subprocess.Popen([sys.executable, "streamlit/app.py"])
-        web_proc=subprocess.Popen(["streamlit", "run", "streamlit/app.py","--server.headless","true"])
+        # Use 'start' (Windows) or 'open' (Mac) to launch in new window
+        if platform.system() == "Windows":
+             web_proc = subprocess.Popen("start streamlit run streamlit/app.py", shell=True)
+        else:
+             web_proc = subprocess.Popen(["streamlit", "run", "streamlit/app.py"], start_new_session=True)
     except Exception as e:
         console.print(f"[red]Failed to start web interface: {e}[/red]")
 @app.command()
@@ -1010,6 +1545,220 @@ def stop_web():
     console.print("[cyan]Stopping web interface...[/cyan]")
     if web_proc:
         web_proc.terminate()
+
+@app.command()
+def pomodoro(
+    duration: int = typer.Option(25, "--duration", "-d", help="Duration in minutes"),
+    subject: str = typer.Option(None, "--subject", "-s", help="Subject to focus on")
+):
+    """Start a Pomodoro focus session."""
+    timer = PomodoroTimer()
+    
+    # Check if a session is already running
+    if timer.current_session and timer.current_session.end_time > datetime.now():
+        remaining = int((timer.current_session.end_time - datetime.now()).total_seconds() / 60)
+        console.print(f"[yellow]Session already running! {remaining}m remaining.[/yellow]")
+        if not typer.confirm("Stop current session and start new one?"):
+            return
+        timer.current_session = None
+
+    if not subject:
+        # Try to get from global context
+        try:
+             with open("data/.current_subject", "r") as f:
+                 subject = f.read().strip()
+        except:
+             subject = "General"
+
+    console.print(f"[bold green]🍅 Starting {duration}m focus session for '{subject}'...[/bold green]")
+    timer.start_session(duration, subject)
+    
+    # Simple countdown
+    try:
+        total_seconds = duration * 60
+        with typer.progressbar(range(total_seconds), label="Focusing...") as progress:
+            for _ in progress:
+                time.sleep(1)
+    except KeyboardInterrupt:
+        console.print("\n[yellow]Session paused/cancelled.[/yellow]")
+        return
+
+    # Finish
+    console.print("\n[bold green]⏰ Session Complete![/bold green]")
+    notes = typer.prompt("Session notes (optional)", default="")
+    session = timer.complete_session(notes)
+    
+    # Show rewards
+    console.print(f"[cyan]Logged! Earned {session.xp_earned} XP[/cyan]")
+    
+    # Show stats
+    stats = timer.get_stats()
+    console.print(f"Today: {stats['daily_count']} sessions ({stats['daily_minutes']}m)")
+
+
+@app.command(name="progress")
+def show_progress():
+    """Show detailed progress and stats."""
+    gm = GamificationManager()
+    progress = gm._load_progress()
+    
+    table = Table(title="🏆 User Progress 🏆")
+    table.add_column("Level", style="cyan")
+    table.add_column("XP", style="green")
+    table.add_column("Streak", style="magenta")
+    
+    table.add_row(str(progress.current_level), f"{progress.total_points}/{progress.points_to_next_level}", f"{progress.current_streak} days 🔥")
+    console.print(table)
+    
+    # Achievements
+    if progress.achievements:
+        console.print("\n[bold]Unlocked Achievements:[/bold]")
+        for a in progress.achievements:
+            console.print(f"🏅 {a.name}: {a.description}")
+
+@app.command(name="todo-add")
+def todo_add(
+    title: str = typer.Argument(..., help="Task title"),
+    description: str = typer.Option("", "--desc", help="Task description"),
+    priority: str = typer.Option("medium", "--priority", "-p", help="Priority (low/medium/high)"),
+    due: str = typer.Option(None, "--due", help="Due date (YYYY-MM-DD)")
+):
+    """Add a new task."""
+    tm = TodoManager()
+    
+    # Context
+    subject = None
+    try:
+         with open("data/.current_subject", "r") as f:
+             subject = f.read().strip()
+    except: pass
+    
+    due_date = None
+    if due:
+        try:
+             due_date = datetime.strptime(due, "%Y-%m-%d")
+        except:
+             console.print("[red]Invalid date format. Use YYYY-MM-DD[/red]")
+             return
+
+    item = tm.add_todo(title, description, priority, subject, due_date)
+    console.print(f"[green]Task added! ID: {item.id}[/green]")
+
+@app.command(name="todo-list")
+def todo_list(
+    status: str = typer.Option("pending", "--status", help="Filter by status (pending/done/all)")
+):
+    """List tasks."""
+    tm = TodoManager()
+    subject = None
+    try:
+         with open("data/.current_subject", "r") as f:
+             subject = f.read().strip()
+    except: pass
+    
+    todos = tm.get_todos(status=status if status != "all" else None, subject=subject)
+    
+    if not todos:
+        console.print("[yellow]No tasks found.[/yellow]")
+        return
+        
+    table = Table(title=f"Tasks ({status})")
+    table.add_column("ID", style="cyan")
+    table.add_column("Title", style="white")
+    table.add_column("Priority", style="magenta")
+    table.add_column("Due", style="green")
+    
+    for t in todos:
+        p_style = "red" if t.priority=="high" else "yellow" if t.priority=="medium" else "blue"
+        due_str = t.due_date.strftime("%Y-%m-%d") if t.due_date else "-"
+        table.add_row(t.id, t.title, f"[{p_style}]{t.priority}[/{p_style}]", due_str)
+        
+    console.print(table)
+
+@app.command(name="todo-complete")
+def todo_complete(task_id: str = typer.Argument(..., help="Task ID")):
+    """Complete a task."""
+    tm = TodoManager()
+    
+    # Find task to verify
+    # (Optional verify) but tm.complete handles it
+    
+    item = tm.complete_todo(task_id)
+    if item:
+        console.print(f"[green]Task '{item.title}' completed! +XP earned[/green]")
+    else:
+        console.print(f"[red]Task ID {task_id} not found.[/red]")
+
+@app.command(name="flashcard-create-deck")
+def flashcard_create_deck(name: str = typer.Argument(..., help="Deck name")):
+    """Create a new flashcard deck."""
+    fm = FlashcardManager()
+    subject = None
+    try:
+         with open("data/.current_subject", "r") as f:
+             subject = f.read().strip()
+    except: pass
+    
+    deck = fm.create_deck(name, subject)
+    console.print(f"[green]Deck '{deck.name}' created![/green]")
+
+@app.command(name="flashcard-add")
+def flashcard_add(
+    deck_name: str = typer.Argument(..., help="Deck name (fuzzy match)"),
+    front: str = typer.Argument(..., help="Front text"),
+    back: str = typer.Argument(..., help="Back text")
+):
+    """Add a card to a deck."""
+    fm = FlashcardManager()
+    decks = fm.list_decks()
+    
+    # Simple fuzzy search
+    target = None
+    for d in decks:
+        if deck_name.lower() in d.name.lower():
+            target = d
+            break
+            
+    if not target:
+        console.print(f"[red]Deck matching '{deck_name}' not found.[/red]")
+        return
+        
+    fm.add_card(target.id, front, back)
+    console.print(f"[green]Card added to '{target.name}'![/green]")
+
+@app.command(name="flashcard-study")
+def flashcard_study(deck_name: str = typer.Argument(..., help="Deck name")):
+    """Interactive study session."""
+    fm = FlashcardManager()
+    decks = fm.list_decks()
+    target = None
+    for d in decks:
+        if deck_name.lower() in d.name.lower():
+            target = d
+            break
+            
+    if not target:
+        console.print(f"[red]Deck not found.[/red]")
+        return
+        
+    cards = fm.get_cards_for_review(target.id)
+    if not cards:
+         console.print("[green]No cards due for review! Great job![/green]")
+         return
+         
+    console.print(f"Studying {len(cards)} cards from '{target.name}'...")
+    
+    for card in cards:
+        console.print(f"\n[bold cyan]Front:[/bold cyan] {card.front}")
+        typer.prompt("Press Enter to flip...")
+        console.print(f"[bold magenta]Back:[/bold magenta] {card.back}")
+        
+        rating = typer.prompt("Quality (0=Fail, 3=Pass, 5=Perfect)", type=int)
+        # Map simple 0-5 to SM-2 0-5
+        fm.review_card(target.id, card.id, rating)
+    
+    console.print("\n[green]Session complete![/green]")
+
 
 @app.command()
 def show_difference(example: str = "tcp_vs_udp"):
@@ -1089,43 +1838,130 @@ def exit():
     """Exit the CLI."""
     console.print("[cyan]Exiting AI Learning Engine CLI. Goodbye![/cyan]")
     raise typer.Exit()
-@app.callback(invoke_without_command=True)
-def main(ctx: typer.Context):
-    """Main callback for interactive mode."""
-    if ctx.invoked_subcommand is None:
-        # Interactive mode
-        while True:
-            try:
-                help()
-                user_input = typer.prompt("\nEnter command (or 'exit' to quit)")
-                if user_input.lower() == "exit":
-                    console.print("[cyan]Exiting AI Learning Engine CLI. Goodbye![/cyan]")
-                    break
-                
-                # Parse command and execute
-                try:
-                    # Split command into parts while respecting quoted strings
-                    args = shlex.split(user_input.strip())
-                    if args:
-                        # Invoke the app with the parsed arguments - Typer apps are callable
-                        app(args, standalone_mode=False)
-                except SystemExit:
-                    # Typer commands may raise SystemExit, catch and continue
-                    pass
-                except Exception as e:
-                    console.print(f"[red]Error executing command: {e}[/red]")
-                    console.print("[yellow]Type 'help' to see available commands[/yellow]")
-            except KeyboardInterrupt:
-                console.print("\n[yellow]Use 'exit' command to quit[/yellow]")
-                continue
-            except EOFError:
-                console.print("\n[cyan]Exiting...[/cyan]")
+@app.command(name="backup-list")
+def backup_list(
+    file_path: str = typer.Option(..., "--file", "-f", help="Path to the file to check backups for")
+):
+    """
+    List available backups for a specific file.
+    """
+    from core.persistence import get_persistence_manager
+    pm = get_persistence_manager()
+    backups = pm.list_backups(file_path)
+    
+    if not backups:
+        console.print(f"[yellow]No backups found for {file_path}[/yellow]")
+        return
+        
+    table = Table(title=f"Backups for {Path(file_path).name}")
+    table.add_column("Index", style="cyan")
+    table.add_column("Timestamp", style="green")
+    table.add_column("Filename", style="magenta")
+    
+    for i, backup in enumerate(backups):
+        try:
+            # Extract timestamp from filename pattern: *_YYYYMMDD_HHMMSS.ext
+            ts_part = backup.stem.split('_')[-2:]
+            timestamp = f"{ts_part[0]} {ts_part[1][:2]}:{ts_part[1][2:4]}:{ts_part[1][4:]}"
+        except:
+            timestamp = "Unknown"
+            
+        table.add_row(str(i), timestamp, backup.name)
+        
+    console.print(table)
+
+
+@app.command(name="backup-restore")
+def backup_restore(
+    file_path: str = typer.Option(..., "--file", "-f", help="Original file path"),
+    backup_index: int = typer.Option(None, "--index", "-i", help="Index of backup to restore (0 is newest)"),
+    backup_name: str = typer.Option(None, "--name", "-n", help="Exact filename of backup to restore")
+):
+    """
+    Restore a file from a backup.
+    """
+    if backup_index is None and backup_name is None:
+        console.print("[red]Error: Must provide either --index or --name[/red]")
+        return
+        
+    from core.persistence import get_persistence_manager
+    pm = get_persistence_manager()
+    backups = pm.list_backups(file_path)
+    
+    if not backups:
+        console.print(f"[red]No backups found for {file_path}[/red]")
+        return
+        
+    target_backup = None
+    if backup_name:
+        for b in backups:
+            if b.name == backup_name:
+                target_backup = b
                 break
+        if not target_backup:
+            console.print(f"[red]Backup '{backup_name}' not found[/red]")
+            return
+    else:
+        if backup_index < 0 or backup_index >= len(backups):
+            console.print(f"[red]Invalid index {backup_index}. Max index is {len(backups)-1}[/red]")
+            return
+        target_backup = backups[backup_index]
+        
+    if typer.confirm(f"Restore {target_backup.name} to {file_path}? This will overwrite current content."):
+        success, error = pm.restore_from_backup(file_path, target_backup)
+        if success:
+            console.print(f"[green]Successfully restored backup to {file_path}[/green]")
+        else:
+            console.print(f"[red]Restore failed: {error}[/red]")
+
+
+def interactive_mode():
+    """Run the CLI in interactive mode."""
+    # Show help at startup
+    console.print("[bold cyan]AI Learning Engine CLI[/bold cyan]")
+    try:
+        app(["--help"], standalone_mode=False)
+    except SystemExit:
+        pass
+    except Exception:
+        pass
+
+    console.print("\nType 'exit' to quit.\n")
+    
+    while True:
+        try:
+            user_input = typer.prompt("\n(cli) >>>", prompt_suffix=" ")
+            if user_input.lower() in ("exit", "quit"):
+                console.print("[cyan]Goodbye![/cyan]")
+                break
+            
+            # Split command into parts
+            try:
+                args = shlex.split(user_input.strip())
+            except ValueError:
+                console.print("[red]Error: mismatched quotes[/red]")
+                continue
+                
+            if not args:
+                continue
+
+            try:
+                # Invoke the app directly for speed
+                # standalone_mode=False prevents SystemExit on error/help
+                app(args, standalone_mode=False)
+            except SystemExit:
+                pass
+            except Exception as e:
+                console.print(f"[red]Error executing command: {e}[/red]")
+                
+        except KeyboardInterrupt:
+            console.print("\n[yellow]Use 'exit' to quit[/yellow]")
+            continue
+        except EOFError:
+            break
 
 if __name__ == "__main__":
-    try:
+    if len(sys.argv) > 1:
         app()
-    except Exception as e:
-        import traceback
-        traceback.print_exc()
-        console.print(f"[red]An error occurred: {e}[/red]")
+    else:
+        interactive_mode()
